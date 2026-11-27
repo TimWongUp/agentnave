@@ -483,6 +483,34 @@ def test_provider_environment_keeps_manager_chat_identity_private(
     assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
 
 
+def test_provider_environment_drops_only_what_t3_injected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t3_home = tmp_path / "t3"
+    for name in ("ANTIGRAVITY_APP_DATA_DIR", "AGY_ACP_FORCE_FILE_STORAGE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("T3CODE_HOME", str(t3_home))
+    monkeypatch.setenv("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0")
+    monkeypatch.setenv("BROWSER", "/bin/sh -c 'echo __T3_ANTIGRAVITY_AUTH_URL__ $1'")
+    monkeypatch.setenv("GEMINI_HOME", str(t3_home / "userdata/providers/antigravity/p1"))
+    env = provider_environment(("agy",))
+    assert not {"SSH_CONNECTION", "BROWSER", "GEMINI_HOME"} & set(env)
+    # The service itself still reads the boss's GEMINI_HOME.
+    assert os.environ["GEMINI_HOME"].endswith("p1")
+
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 50000 10.0.0.1 22")
+    monkeypatch.setenv("BROWSER", "firefox")
+    monkeypatch.setenv("GEMINI_HOME", str(tmp_path / "my-gemini"))
+    env = provider_environment(("agy",))
+    assert env["SSH_CONNECTION"] == "10.0.0.2 50000 10.0.0.1 22"
+    assert env["BROWSER"] == "firefox"
+    assert env["GEMINI_HOME"] == str(tmp_path / "my-gemini")
+
+    # File-backed credential storage marks T3's profile, whatever GEMINI_HOME it names.
+    monkeypatch.setenv("AGY_ACP_FORCE_FILE_STORAGE", "1")
+    assert not {"AGY_ACP_FORCE_FILE_STORAGE", "GEMINI_HOME"} & set(provider_environment(("agy",)))
+
+
 @pytest.mark.parametrize("value", [None, False, True])
 def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None) -> None:
     options: dict[str, str | int | float | bool] = (
@@ -1127,6 +1155,7 @@ def test_antigravity_adapter_strips_host_and_t3_acp_env(
 ) -> None:
     monkeypatch.delenv("ANTIGRAVITY_APP_DATA_DIR", raising=False)
     monkeypatch.delenv("AGY_ACP_FORCE_FILE_STORAGE", raising=False)
+    monkeypatch.delenv("GEMINI_HOME", raising=False)
     adapter = AntigravityAdapter()
     plain = adapter.prepare(InvocationRequest(provider="antigravity", prompt="hi", cwd=tmp_path))
     assert "ANTIGRAVITY_CONVERSATION_ID" in plain.unset_env
@@ -2017,7 +2046,6 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
         adapter.prepare(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell script")
 def test_deepseek_profile_routes_run_where_a_deleted_temp_dir_cannot_break_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2032,6 +2060,7 @@ def test_deepseek_profile_routes_run_where_a_deleted_temp_dir_cannot_break_them(
     assert tmpdir == "unset"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
 def test_deepseek_profile_routes_read_the_composed_entries(tmp_path: Path) -> None:
     dump = tmp_path / "dsh"
     lines = (

@@ -54,6 +54,15 @@ PLIST
 # Ad-hoc signed: enough to run locally and for screenshots, not for distribution.
 codesign --force --deep --sign - "$APP" >/dev/null
 (
+  # T3 Code's Antigravity ACP profile markers, judged before ANTIGRAVITY_* goes below; a real SSH
+  # login, the user's own BROWSER and a GEMINI_HOME of their own stay.
+  t3_profiles="${T3CODE_HOME:-$HOME/.t3}/userdata/providers/antigravity/"
+  if [ -n "${AGY_ACP_FORCE_FILE_STORAGE:-}" ]; then unset GEMINI_HOME; fi
+  case "${ANTIGRAVITY_APP_DATA_DIR:-}" in */antigravity-acp) unset GEMINI_HOME ;; esac
+  case "${GEMINI_HOME:-}" in "$t3_profiles"*) unset GEMINI_HOME ;; esac
+  if [ "${SSH_CONNECTION:-}" = "127.0.0.1 0 127.0.0.1 0" ]; then unset SSH_CONNECTION; fi
+  case "${BROWSER:-}" in *__T3_ANTIGRAVITY_AUTH_URL__*) unset BROWSER ;; esac
+  unset AGY_ACP_FORCE_FILE_STORAGE
   unset TMPDIR TEMP TMP CLAUDECODE ELECTRON_RUN_AS_NODE
   for var in $(env | awk -F= '/^(ANTIGRAVITY|T3_ACP_MCP|T3CODE)_[A-Za-z0-9_]*=/ && $1 != "T3CODE_HOME" && $1 != "ANTIGRAVITY_CLI_HOME" { print $1 }'); do
     unset "$var"

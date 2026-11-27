@@ -1,6 +1,7 @@
 //! One CLI running in a pseudo-terminal, and the recent output a page replays when it attaches.
 
 use std::collections::VecDeque;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -428,25 +429,46 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
 ///
-/// Shares the canonical startup parent-session list in [`crate::temp_dir`] and additionally strips
+/// Shares the canonical value-aware startup filter in [`crate::temp_dir`] and additionally strips
 /// `CLAUDE_CODE_*` and `T3CODE_HOME` for isolated interactive terminals.
-pub(crate) fn parent_session(name: &str) -> bool {
+fn parent_session(name: &str, value: &OsStr, parent: &crate::temp_dir::ParentEnv) -> bool {
     // Windows environment names are case-insensitive.
     let upper = name.to_ascii_uppercase();
-    crate::temp_dir::is_startup_parent_session(name)
+    parent.is_parent_session(name, value)
         || upper.starts_with("CLAUDE_CODE_")
         || upper == "T3CODE_HOME"
 }
 
+/// The names among `vars` that a CLI started from the App must not inherit.
+pub(crate) fn parent_session_names(
+    vars: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Vec<OsString> {
+    let vars: Vec<_> = vars.into_iter().collect();
+    let parent = crate::temp_dir::ParentEnv::new(vars.iter().map(|(name, value)| (name, value)));
+    vars.into_iter()
+        .filter(|(name, value)| {
+            name.to_str()
+                .is_some_and(|text| parent_session(text, value, &parent))
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
 pub(super) fn strip_parent_session(
     command: &mut CommandBuilder,
-    vars: impl IntoIterator<Item = std::ffi::OsString>,
+    vars: impl IntoIterator<Item = (OsString, OsString)>,
 ) {
-    for name in vars {
-        if name.to_str().is_some_and(parent_session) {
-            command.env_remove(name);
-        }
+    for name in parent_session_names(vars) {
+        command.env_remove(name);
     }
+}
+
+/// An empty zsh startup directory shared by every terminal a test starts.
+#[cfg(test)]
+fn test_zdotdir() -> PathBuf {
+    let dir = std::env::temp_dir().join("agentnave-test-zdotdir");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }
 
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
@@ -467,7 +489,10 @@ pub(super) fn command(program: &Path, args: &[String], cwd: &Path) -> CommandBui
     };
     command.args(args);
     command.cwd(cwd);
-    strip_parent_session(&mut command, std::env::vars_os().map(|(name, _)| name));
+    strip_parent_session(&mut command, std::env::vars_os());
+    // Tests must not run the developer's zsh startup files; over SSH they may start tmux.
+    #[cfg(test)]
+    command.env("ZDOTDIR", test_zdotdir());
     crate::temp_dir::apply_to_pty(&mut command);
     if let Some(path) = crate::detect::search_path(program) {
         command.env("PATH", path);

@@ -213,10 +213,8 @@ impl GhClient {
         cmd.args(args);
         cmd.stdin(Stdio::null());
         cmd.current_dir(crate::temp_dir::usable());
-        for (name, _) in std::env::vars_os() {
-            if name.to_str().is_some_and(crate::terminal::parent_session) {
-                cmd.env_remove(name);
-            }
+        for name in crate::terminal::parent_session_names(std::env::vars_os()) {
+            cmd.env_remove(name);
         }
         crate::temp_dir::apply_to_command(&mut cmd);
         cmd.env("GH_PROMPT_DISABLED", "1");

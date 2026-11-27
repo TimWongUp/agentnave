@@ -40,7 +40,7 @@ use crate::data::boss_app::CliTitle;
 use crate::providers::PROVIDERS;
 use crate::response::{self, Response};
 use account::{Active, Login};
-pub(crate) use session::parent_session;
+pub(crate) use session::parent_session_names;
 use session::{Launch, Session};
 
 /// How long an output request waits for new output before answering empty.

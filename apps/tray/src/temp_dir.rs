@@ -7,7 +7,7 @@
 //! with `ENOENT`.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -91,15 +91,97 @@ fn is_agent_session_trigger(name: &str) -> bool {
         || AGENT_SESSION_EXACT.contains(&upper.as_str())
 }
 
-/// Whether `name` is a parent-session variable stripped at startup and from background children.
-///
-/// Preserves user configuration, gateway, and credential variables such as `T3CODE_HOME`,
-/// `ANTIGRAVITY_CLI_HOME`, `AGENTNAVE_DATA_DIR`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
-/// `PI_CODING_AGENT_DIR`, `CODEBUDDY_CONFIG_DIR`, `ZCODE_DATA_BASE_DIR`,
-/// `CLAUDE_CODE_USE_BEDROCK`, and `CLAUDE_CODE_USE_VERTEX`.
-pub(crate) fn is_startup_parent_session(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    is_agent_session_trigger(&upper) || STRIP_ONLY_EXACT.contains(&upper.as_str())
+/// The loopback `SSH_CONNECTION` T3 Code sets for its Antigravity ACP profile, so the CLI prints
+/// its sign-in URL; a real SSH login's value is kept.
+const T3_SSH_CONNECTION: &str = "127.0.0.1 0 127.0.0.1 0";
+/// What T3 Code's `BROWSER` stub carries to capture that URL; a user's own `BROWSER` is kept.
+const T3_BROWSER_MARKER: &str = "__T3_ANTIGRAVITY_AUTH_URL__";
+
+/// How a startup variable relates to the parent session that launched the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParentMark {
+    /// Not a parent-session variable.
+    Keep,
+    /// Stripped without resetting temp env on its own.
+    Strip,
+    /// Stripped, and proves the process came from a session whose temp dir may vanish.
+    Trigger,
+}
+
+/// What the whole inherited environment says about where it came from, judged once before any
+/// variable is removed so `GEMINI_HOME`'s origin can rest on markers removed with it.
+pub(crate) struct ParentEnv {
+    t3_antigravity_profile: bool,
+}
+
+impl ParentEnv {
+    pub(crate) fn new<K: AsRef<OsStr>, V: AsRef<OsStr>>(
+        vars: impl IntoIterator<Item = (K, V)>,
+    ) -> Self {
+        let mut app_data = None;
+        let mut file_storage = false;
+        let mut gemini_home = None;
+        let mut t3_home = None;
+        for (name, value) in vars {
+            let (Some(name), value) = (name.as_ref().to_str(), value.as_ref()) else {
+                continue;
+            };
+            let present = !value.to_string_lossy().trim().is_empty();
+            match name.to_ascii_uppercase().as_str() {
+                "ANTIGRAVITY_APP_DATA_DIR" if present => app_data = Some(PathBuf::from(value)),
+                "AGY_ACP_FORCE_FILE_STORAGE" => file_storage |= present,
+                "GEMINI_HOME" if present => gemini_home = Some(PathBuf::from(value)),
+                "T3CODE_HOME" if present => t3_home = Some(PathBuf::from(value)),
+                _ => {}
+            }
+        }
+        let acp_app_data =
+            app_data.is_some_and(|dir| dir.file_name() == Some("antigravity-acp".as_ref()));
+        let t3_profile_home = gemini_home.is_some_and(|home| {
+            t3_home
+                .or_else(|| dirs::home_dir().map(|home| home.join(".t3")))
+                .is_some_and(|t3| home.starts_with(t3.join("userdata/providers/antigravity")))
+        });
+        Self {
+            t3_antigravity_profile: acp_app_data || file_storage || t3_profile_home,
+        }
+    }
+
+    /// The current process environment.
+    pub(crate) fn current() -> Self {
+        Self::new(std::env::vars_os())
+    }
+
+    fn mark(&self, name: &str, value: &OsStr) -> ParentMark {
+        let upper = name.to_ascii_uppercase();
+        let t3_injected = match upper.as_str() {
+            "SSH_CONNECTION" => value == T3_SSH_CONNECTION,
+            "BROWSER" => value.to_string_lossy().contains(T3_BROWSER_MARKER),
+            "AGY_ACP_FORCE_FILE_STORAGE" => true,
+            _ => false,
+        };
+        if t3_injected || is_agent_session_trigger(&upper) {
+            ParentMark::Trigger
+        } else if STRIP_ONLY_EXACT.contains(&upper.as_str())
+            || (upper == "GEMINI_HOME" && self.t3_antigravity_profile)
+        {
+            ParentMark::Strip
+        } else {
+            ParentMark::Keep
+        }
+    }
+
+    /// Whether `name=value` is a parent-session variable stripped at startup and from background
+    /// children.
+    ///
+    /// Preserves user configuration, gateway, and credential variables such as `T3CODE_HOME`,
+    /// `ANTIGRAVITY_CLI_HOME`, `AGENTNAVE_DATA_DIR`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
+    /// `PI_CODING_AGENT_DIR`, `CODEBUDDY_CONFIG_DIR`, `ZCODE_DATA_BASE_DIR`,
+    /// `CLAUDE_CODE_USE_BEDROCK`, and `CLAUDE_CODE_USE_VERTEX`, as well as a real SSH login's
+    /// `SSH_CONNECTION`, a user's `BROWSER` and a `GEMINI_HOME` outside T3 Code's profile.
+    pub(crate) fn is_parent_session(&self, name: &str, value: &OsStr) -> bool {
+        self.mark(name, value) != ParentMark::Keep
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -109,20 +191,24 @@ pub(crate) struct StartupEnvPlan {
 }
 
 pub(crate) fn plan_startup_env(
-    vars: impl IntoIterator<Item = OsString>,
+    vars: impl IntoIterator<Item = (OsString, OsString)>,
     current_temp_dir: &Path,
 ) -> StartupEnvPlan {
+    let vars: Vec<_> = vars.into_iter().collect();
+    let parent = ParentEnv::new(vars.iter().map(|(name, value)| (name, value)));
     let mut from_agent_session = false;
     let mut remove_vars = Vec::new();
-    for name in vars {
+    for (name, value) in vars {
         let Some(text) = name.to_str() else {
             continue;
         };
-        if is_agent_session_trigger(text) {
-            from_agent_session = true;
-            remove_vars.push(name);
-        } else if is_startup_parent_session(text) {
-            remove_vars.push(name);
+        match parent.mark(text, &value) {
+            ParentMark::Trigger => {
+                from_agent_session = true;
+                remove_vars.push(name);
+            }
+            ParentMark::Strip => remove_vars.push(name),
+            ParentMark::Keep => {}
         }
     }
     StartupEnvPlan {
@@ -146,10 +232,7 @@ pub(crate) fn sanitize_startup_env() {
     }
     let _ = INHERITED.set(original);
 
-    let plan = plan_startup_env(
-        std::env::vars_os().map(|(name, _)| name),
-        &std::env::temp_dir(),
-    );
+    let plan = plan_startup_env(std::env::vars_os(), &std::env::temp_dir());
 
     // SAFETY: `main` calls this before starting any other thread, so no other thread reads the
     // environment while it changes.
@@ -372,8 +455,12 @@ pub(crate) fn apply_to_pty(cmd: &mut CommandBuilder) {
 
 /// Remove startup parent-session variables from `cmd` and repair any invalid temp env var.
 pub(crate) fn strip_child_env(cmd: &mut Command) {
-    for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(is_startup_parent_session) {
+    let parent = ParentEnv::current();
+    for (name, value) in std::env::vars_os() {
+        if name
+            .to_str()
+            .is_some_and(|text| parent.is_parent_session(text, &value))
+        {
             cmd.env_remove(name);
         }
     }
@@ -401,9 +488,10 @@ pub(crate) fn sanitize_env_map_with(
 ) -> BTreeMap<String, String> {
     let mut cached_fallback: Option<String> = None;
     let mut fallback = Some(fallback);
+    let parent = ParentEnv::new(env);
     let mut out = BTreeMap::new();
     for (key, value) in env {
-        if is_startup_parent_session(key) {
+        if parent.is_parent_session(key, value.as_ref()) {
             continue;
         }
         if is_temp_env_key(key) && !Path::new(value).is_dir() {

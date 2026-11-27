@@ -4,9 +4,21 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use super::{
-    invalid_temp_overrides_in, is_startup_parent_session, plan_startup_env, resolve_usable_in,
+    ParentEnv, invalid_temp_overrides_in, plan_startup_env, resolve_usable_in,
     sanitize_env_map_with, usable,
 };
+
+/// Each name set to a value that carries no meaning of its own.
+fn named<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<(OsString, OsString)> {
+    names
+        .into_iter()
+        .map(|name| (OsString::from(name), OsString::from("1")))
+        .collect()
+}
+
+fn is_startup_parent_session(name: &str) -> bool {
+    ParentEnv::new(named([])).is_parent_session(name, "1".as_ref())
+}
 
 #[test]
 fn resolve_usable_in_falls_back_when_current_dir_is_missing() {
@@ -30,7 +42,7 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
     // Regular terminal vars and persistent tokens (CLAUDE_CODE_OAUTH_TOKEN) are stripped
     // but do NOT reset a valid TMPDIR; user config vars like ANTIGRAVITY_CLI_HOME stay intact.
     let terminal_plan = plan_startup_env(
-        [
+        named([
             "TERM_PROGRAM",
             "TERM_PROGRAM_VERSION",
             "PWD",
@@ -47,9 +59,7 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
             "ANTHROPIC_API_KEY",
-        ]
-        .into_iter()
-        .map(OsString::from),
+        ]),
         valid.path(),
     );
     assert!(!terminal_plan.reset_temp);
@@ -65,7 +75,7 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
     );
 
     // Missing current temp dir triggers reset even without agent session vars.
-    let missing_plan = plan_startup_env([OsString::from("HOME")], &missing);
+    let missing_plan = plan_startup_env(named(["HOME"]), &missing);
     assert!(missing_plan.reset_temp);
     assert!(missing_plan.remove_vars.is_empty());
 
@@ -84,13 +94,13 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
         "SERVER__PORT",
     ] {
         let plan = plan_startup_env(
-            [
-                OsString::from(trigger),
-                OsString::from("T3CODE_HOME"),
-                OsString::from("ANTIGRAVITY_CLI_HOME"),
-                OsString::from("AGENTNAVE_DATA_DIR"),
-                OsString::from("CLAUDE_CODE_USE_BEDROCK"),
-            ],
+            named([
+                trigger,
+                "T3CODE_HOME",
+                "ANTIGRAVITY_CLI_HOME",
+                "AGENTNAVE_DATA_DIR",
+                "CLAUDE_CODE_USE_BEDROCK",
+            ]),
             valid.path(),
         );
         assert!(plan.reset_temp, "expected temp reset for {trigger}");
@@ -141,6 +151,72 @@ fn startup_parent_session_preserves_user_config_and_gateway_vars() {
             "{stripped} should be stripped at startup"
         );
     }
+}
+
+#[test]
+fn only_the_values_t3_code_injects_are_stripped() {
+    let valid = tempfile::tempdir().unwrap();
+    let t3_home = valid.path().join("t3");
+    let pairs = |vars: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
+        vars.iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+            .collect()
+    };
+    let profile = t3_home.join("userdata/providers/antigravity/p1");
+    let user = pairs(&[
+        ("SSH_CONNECTION", "10.0.0.2 50000 10.0.0.1 22"),
+        ("SSH_CLIENT", "10.0.0.2 50000 22"),
+        ("SSH_TTY", "/dev/ttys001"),
+        ("BROWSER", "firefox"),
+        ("GEMINI_HOME", "/Users/me/.gemini"),
+        ("T3CODE_HOME", t3_home.to_str().unwrap()),
+    ]);
+    let plan = plan_startup_env(user, valid.path());
+    assert!(!plan.reset_temp);
+    assert!(plan.remove_vars.is_empty(), "{:?}", plan.remove_vars);
+
+    // T3's loopback SSH_CONNECTION and BROWSER stub prove a T3 session; its profile GEMINI_HOME,
+    // recognised under a custom T3CODE_HOME, goes with them.
+    let t3 = pairs(&[
+        ("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0"),
+        (
+            "BROWSER",
+            "/bin/sh -c 'echo __T3_ANTIGRAVITY_AUTH_URL__ $1'",
+        ),
+        ("GEMINI_HOME", profile.to_str().unwrap()),
+        ("T3CODE_HOME", t3_home.to_str().unwrap()),
+    ]);
+    let plan = plan_startup_env(t3, valid.path());
+    assert!(plan.reset_temp);
+    assert_eq!(
+        plan.remove_vars,
+        ["SSH_CONNECTION", "BROWSER", "GEMINI_HOME"].map(OsString::from)
+    );
+
+    // File-backed credential storage marks T3's ACP profile whatever GEMINI_HOME names.
+    let plan = plan_startup_env(
+        pairs(&[
+            ("AGY_ACP_FORCE_FILE_STORAGE", "1"),
+            ("GEMINI_HOME", "/elsewhere"),
+        ]),
+        valid.path(),
+    );
+    assert!(plan.reset_temp);
+    assert_eq!(
+        plan.remove_vars,
+        ["AGY_ACP_FORCE_FILE_STORAGE", "GEMINI_HOME"].map(OsString::from)
+    );
+
+    // The map handed to a reopened host is filtered the same way.
+    let mut env = BTreeMap::new();
+    env.insert(
+        "ANTIGRAVITY_APP_DATA_DIR".to_owned(),
+        "/p/antigravity-acp".to_owned(),
+    );
+    env.insert("GEMINI_HOME".to_owned(), "/p".to_owned());
+    env.insert("BROWSER".to_owned(), "open".to_owned());
+    let clean = sanitize_env_map_with(&env, || valid.path().to_path_buf());
+    assert_eq!(clean.keys().collect::<Vec<_>>(), ["BROWSER"]);
 }
 
 #[test]

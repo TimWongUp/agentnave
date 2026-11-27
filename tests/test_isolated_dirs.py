@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import AbstractContextManager, closing
@@ -2311,6 +2312,8 @@ def test_git_heals_a_temp_dir_the_host_deleted(
     repo = tmp_path / "repo"
     repo.mkdir()
     run_git(["init", "-q"], cwd=repo)
-    env = run_git(["e"], cwd=repo, config_overrides=["alias.e=!env"]).stdout.decode()
-    assert f"TMPDIR={gone}" not in env.splitlines()
-    assert f"TEMP={tmp_path}" in env.splitlines()
+    # A native interpreter, not MSYS2 `env`, so Git for Windows hands TEMP over in Windows form.
+    dump = f'!"{Path(sys.executable).as_posix()}" -c "import json,os; print(json.dumps(dict(os.environ)))"'
+    env = json.loads(run_git(["e"], cwd=repo, config_overrides=[f"alias.e={dump}"]).stdout)
+    assert "TMPDIR" not in env or Path(env["TMPDIR"]).is_dir()
+    assert Path(env["TEMP"]).samefile(tmp_path)

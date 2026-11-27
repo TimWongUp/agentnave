@@ -19,6 +19,7 @@ from typing import cast
 
 from agentnave.adapters.base import provider_bin_dirs
 from agentnave.host import NATIVE_SESSION_ENV
+from agentnave.t3_env import t3_injected_env
 from agentnave.temp_dir import sanitize_temp_env, usable_temp_dir
 from agentnave.windows_supervisor import server_identity
 
@@ -102,6 +103,9 @@ def provider_environment(
     install directories.
     """
     env = dict(os.environ)
+    # Judged on the untouched copy: GEMINI_HOME's origin depends on markers removed with it.
+    for name in t3_injected_env(env):
+        env.pop(name, None)
     # The boss's identity stays with the boss: a provider's own MCP entry, or its own
     # ancestry, names the host its relay serves (ADR-0096).
     for name in INHERITED_HOST_ENV:

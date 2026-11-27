@@ -7,7 +7,7 @@ use portable_pty::CommandBuilder;
 
 #[cfg(unix)]
 use super::session::Session;
-use super::session::{KEPT, Output, cli_args, command, parent_session};
+use super::session::{KEPT, Output, cli_args, command, parent_session_names};
 #[cfg(unix)]
 use super::{Running, Terminals};
 
@@ -125,6 +125,10 @@ fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
 
 /// Waits for the CLI to exit, reading whatever it still writes.
 #[cfg(unix)]
+fn parent_session(name: &str) -> bool {
+    !parent_session_names([(name.into(), "1".into())]).is_empty()
+}
+
 fn exit_of(session: &Session) -> Option<u32> {
     output_until(session, "\u{0}").1
 }
@@ -492,7 +496,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
             "KEEP_ME",
         ]
         .into_iter()
-        .map(std::ffi::OsString::from),
+        .map(|name| (name.into(), "1".into())),
     );
     assert_eq!(cmd.get_env("HERDR_PANE_ID"), None);
     assert_eq!(cmd.get_env("HERDR_SESSION"), None);

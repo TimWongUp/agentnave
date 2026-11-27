@@ -33,10 +33,8 @@ pub(super) fn status_with(program: &Path, dir: Option<&Path>) -> Value {
     command.args(["auth", "status", "--json"]);
     command.stdin(std::process::Stdio::null());
     command.current_dir(crate::temp_dir::usable());
-    for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(crate::terminal::parent_session) {
-            command.env_remove(name);
-        }
+    for name in crate::terminal::parent_session_names(std::env::vars_os()) {
+        command.env_remove(name);
     }
     crate::temp_dir::apply_to_command(&mut command);
     if let Some(path) = crate::detect::search_path(program) {
