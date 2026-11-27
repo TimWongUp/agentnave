@@ -92,10 +92,35 @@ fn is_agent_session_trigger(name: &str) -> bool {
 }
 
 /// The loopback `SSH_CONNECTION` T3 Code sets for its Antigravity ACP profile, so the CLI prints
-/// its sign-in URL; a real SSH login's value is kept.
+/// its sign-in URL; a real SSH login's value is kept. Kept in sync with `src/agentnave/t3_env.py`.
 const T3_SSH_CONNECTION: &str = "127.0.0.1 0 127.0.0.1 0";
 /// What T3 Code's `BROWSER` stub carries to capture that URL; a user's own `BROWSER` is kept.
+/// Kept in sync with `src/agentnave/t3_env.py`.
 const T3_BROWSER_MARKER: &str = "__T3_ANTIGRAVITY_AUTH_URL__";
+
+fn path_starts_with_os(path: &Path, prefix: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let mut path_components = path.components();
+        for want in prefix.components() {
+            let Some(got) = path_components.next() else {
+                return false;
+            };
+            if !got
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&want.as_os_str().to_string_lossy())
+            {
+                return false;
+            }
+        }
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(prefix)
+    }
+}
 
 /// How a startup variable relates to the parent session that launched the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +165,10 @@ impl ParentEnv {
         let t3_profile_home = gemini_home.is_some_and(|home| {
             t3_home
                 .or_else(|| dirs::home_dir().map(|home| home.join(".t3")))
-                .is_some_and(|t3| home.starts_with(t3.join("userdata/providers/antigravity")))
+                .is_some_and(|t3| {
+                    let profiles = t3.join("userdata").join("providers").join("antigravity");
+                    path_starts_with_os(&home, &profiles)
+                })
         });
         Self {
             t3_antigravity_profile: acp_app_data || file_storage || t3_profile_home,
@@ -157,12 +185,13 @@ impl ParentEnv {
         let t3_injected = match upper.as_str() {
             "SSH_CONNECTION" => value == T3_SSH_CONNECTION,
             "BROWSER" => value.to_string_lossy().contains(T3_BROWSER_MARKER),
-            "AGY_ACP_FORCE_FILE_STORAGE" => true,
+            "AGY_ACP_FORCE_FILE_STORAGE" => !value.to_string_lossy().trim().is_empty(),
             _ => false,
         };
         if t3_injected || is_agent_session_trigger(&upper) {
             ParentMark::Trigger
         } else if STRIP_ONLY_EXACT.contains(&upper.as_str())
+            || upper == "AGY_ACP_FORCE_FILE_STORAGE"
             || (upper == "GEMINI_HOME" && self.t3_antigravity_profile)
         {
             ParentMark::Strip

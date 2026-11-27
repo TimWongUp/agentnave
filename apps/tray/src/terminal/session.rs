@@ -466,7 +466,7 @@ pub(super) fn strip_parent_session(
 /// An empty zsh startup directory shared by every terminal a test starts.
 #[cfg(test)]
 fn test_zdotdir() -> PathBuf {
-    let dir = std::env::temp_dir().join("agentnave-test-zdotdir");
+    let dir = crate::temp_dir::usable().join("agentnave-test-zdotdir");
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

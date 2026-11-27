@@ -123,12 +123,12 @@ fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
     (text, session.exit())
 }
 
-/// Waits for the CLI to exit, reading whatever it still writes.
-#[cfg(unix)]
 fn parent_session(name: &str) -> bool {
     !parent_session_names([(name.into(), "1".into())]).is_empty()
 }
 
+/// Waits for the CLI to exit, reading whatever it still writes.
+#[cfg(unix)]
 fn exit_of(session: &Session) -> Option<u32> {
     output_until(session, "\u{0}").1
 }
