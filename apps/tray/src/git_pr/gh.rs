@@ -223,11 +223,7 @@ impl GhClient {
         {
             cmd.env("PATH", path);
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
+        crate::process::hide_window(&mut cmd);
         output(cmd, timeout).map_err(|err| match err {
             OutputError::Timeout => GhError::Other("gh 执行超时".into()),
             OutputError::Io(e)

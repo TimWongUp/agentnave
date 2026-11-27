@@ -442,27 +442,36 @@
   function rankRowNode(s, dim, total, buckets, redrawAll) {
     const isProv = dim === "provider", isModel = dim === "model";
     const hasSubs = Boolean(s.subs?.length), open = hasSubs && state.open.has(s.id);
-    const subTip = isModel ? L(`${s.name} 工具明细`, `${s.name} by tool`) : L(`${s.name} 模型明细`, `${s.name} models`);
-    const twist = hasSubs ? h("button.u-twist", { type: "button", "data-open": s.id, "aria-expanded": String(open), "aria-label": subTip }, chevronSvg()) : null;
-    twist?.addEventListener("click", e => {
-      e.stopPropagation();
+    const toggleOpen = () => {
+      if (!hasSubs) return;
       const willOpen = !state.open.has(s.id);
       state.open[willOpen ? "add" : "delete"](s.id);
       justOpenedRankId = willOpen ? s.id : null;
       redrawAll();
-    });
+    };
+    const twist = hasSubs ? h("span.u-twist", { "data-open": s.id, "aria-hidden": "true" }, chevronSvg()) : null;
     const nameBlock = isProv ? h("span.u-rname", {}, tile(s.provider), h("em", {}, s.name))
-      : h("span.u-rname", {}, h("i.u-dot", toneProps(s.provider, s.shade, s.ci, s.family)), h("em", {}, s.name));
-    const under = h("span.u-under", {}, isModel && s.vendor ? h("span.u-vendor", {}, h("i.u-dot", toneProps(s.provider, 0, s.ci, s.family)), span("", s.vendor)) : null, h("span.u-track", {}, fill(h("i"), total > 0 ? s.value / total : 0)));
+      : h("span.u-rname", {}, h("i.u-dot", toneProps(s.provider, s.shade, s.ci, s.family)), h("em", {}, s.name),
+        isModel && s.vendor ? h("span.u-vendor", { title: s.vendor }, s.vendor) : null);
+    const under = h("span.u-under", {}, h("span.u-track", {}, fill(h("i"), total > 0 ? s.value / total : 0)));
     const spark = window.UsageChart ? window.UsageChart.sparkSvg(buckets.map((b, i) => b.has ? s.values[i] : null).filter(v => v != null), 42, 16, s) : null;
     const valNode = span(`num u-val${state.metric === "cost" && unpricedAll(s.raw) ? " dim" : ""}`, state.metric === "cost" ? costText(s.raw) : fmtValue(s.value));
     const share = total > 0 ? s.value / total : 0;
-    const row = applyTone(h("div.u-rrow.item", {
-      role: "button", tabindex: "0", "aria-pressed": String(state.pinned.has(s.id)), "data-id": s.id,
+    const rowAttrs = {
+      "data-id": s.id,
       title: `${s.name} · ${(share * 100).toFixed(1)}% · ${count(s.calls)} ${L("次调用", "calls")}`,
-    }, h(`span.u-lead${hasSubs ? "" : ".flat"}`, {}, twist, h("span.u-who", {}, nameBlock, under)),
-    h("span.u-spark-cell", {}, spark), valNode, span(`num u-price${s.price == null ? " dim" : ""}`, fmtPrice(s.price)),
-    h("span.num", {}, h("span.u-delta", {}, ...deltaNodes(s.delta, metricTone()))), span("num u-hit", pct(s.hit), hitExact(s.hit))), s);
+      ...(hasSubs ? { role: "button", tabindex: "0", "aria-expanded": String(open) } : {}),
+    };
+    const row = applyTone(h(`div.u-rrow.item${hasSubs ? "" : ".flat"}`, rowAttrs,
+      h(`span.u-lead${hasSubs ? "" : ".flat"}`, {}, twist, h("span.u-who", {}, nameBlock, under)),
+      h("span.u-spark-cell", {}, spark), valNode, span(`num u-price${s.price == null ? " dim" : ""}`, fmtPrice(s.price)),
+      h("span.num", {}, h("span.u-delta", {}, ...deltaNodes(s.delta, metricTone()))), span("num u-hit", pct(s.hit), hitExact(s.hit))), s);
+    if (hasSubs) {
+      row.addEventListener("click", toggleOpen);
+      row.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleOpen(); }
+      });
+    }
     const subs = open ? rankSubRows(s, total) : [];
     if (open && justOpenedRankId === s.id) {
       justOpenedRankId = null;
@@ -492,7 +501,8 @@
       : state.sort.dir * (a[state.sort.key] - b[state.sort.key]) || b.value - a.value);
     const rankRows = [], bodyNodes = [];
     for (const s of sorted) { const built = rankRowNode(s, dim, total, buckets, redrawAll); rankRows.push(built.row); bodyNodes.push(built.row, ...built.subs); }
-    const card = h(`section.u-card.u-rank${dim === "model" ? ".u-mono" : ""}`, { "aria-label": L("排行", "Ranking") }, head, ...bodyNodes);
+    const dimCls = dim === "model" ? ".u-mono" : dim === "provider" ? ".u-dim-provider" : "";
+    const card = h(`section.u-card.u-rank${dimCls}`, { "aria-label": L("排行", "Ranking") }, head, ...bodyNodes);
     return { card, rankRows };
   }
 
@@ -550,14 +560,17 @@
     });
   }
 
-  function wirePinGroup(container, onPin, onHover) {
-    const hit = e => e.target?.closest?.(".u-chip,.u-rrow.item,.u-arc");
-    container.addEventListener("click", e => { if (!e.target?.closest?.(".u-twist") && hit(e)) onPin(dataAttr(hit(e), "id")); });
+  function wireLegendPin(container, onPin, onHover) {
+    const hit = e => e.target?.closest?.(".u-chip");
+    container.addEventListener("click", e => { const chip = hit(e); if (chip) onPin(dataAttr(chip, "id")); });
     container.addEventListener("pointerover", e => { if (e.pointerType !== "touch") onHover(hit(e) ? dataAttr(hit(e), "id") : null); });
     container.addEventListener("pointerleave", () => onHover(null));
-    container.addEventListener("keydown", e => {
-      if ((e.key === "Enter" || e.key === " ") && e.target?.classList?.contains?.("item")) { e.preventDefault(); onPin(dataAttr(e.target, "id")); }
-    });
+  }
+
+  function wireHoverGroup(container, onHover) {
+    const hit = e => e.target?.closest?.(".u-rrow.item,.u-arc");
+    container.addEventListener("pointerover", e => { if (e.pointerType !== "touch") onHover(hit(e) ? dataAttr(hit(e), "id") : null); });
+    container.addEventListener("pointerleave", () => onHover(null));
   }
 
   const LEGEND_CAP = 10;
@@ -610,7 +623,7 @@
     const legendEl = h("div.u-legend");
     let chips = [];
 
-    const split = h(`div.u-split${state.open.size > 0 ? ".grown" : ""}`), donutBox = h("div.u-donut");
+    const split = h("div.u-split"), donutBox = h("div.u-donut");
     const donutRefs = window.UsageChart ? window.UsageChart.drawDonut(donutBox, items, total, fmtValue) : { arcs: [], center: null };
     const sideCard = h("section.u-card.u-side", {}, donutBox, compSection(data));
 
@@ -638,7 +651,7 @@
     };
     const syncVisuals = (redrawTrend = false) => { if (redrawTrend) redrawChart(); syncHighlight(); };
     const rebuildRank = () => {
-      rankRefs = rankCard(items, total, buckets, () => { rebuildRank(); split.classList.toggle("grown", state.open.size > 0); syncHighlight(); });
+      rankRefs = rankCard(items, total, buckets, () => { rebuildRank(); syncHighlight(); });
       split.replaceChildren(rankRefs.card, sideCard);
     };
     rebuildLegend(true);
@@ -647,8 +660,8 @@
     clearBtn.addEventListener("click", () => { state.pinned.clear(); state.hover = null; rebuildLegend(); syncVisuals(true); });
     const togglePin = id => { state.pinned[state.pinned.has(id) ? "delete" : "add"](id); rebuildLegend(); syncVisuals(state.shape === "line"); };
     const setHover = id => { if (state.hover !== id) { state.hover = id; syncHighlight(); } };
-    wirePinGroup(legendEl, togglePin, setHover);
-    wirePinGroup(split, togglePin, setHover);
+    wireLegendPin(legendEl, togglePin, setHover);
+    wireHoverGroup(split, setHover);
     wirePlotEvents(plot, buckets, grain, () => geo, syncHighlight, idx => {
       const b = buckets[idx];
       if (grain !== "day" || !b?.has) return;

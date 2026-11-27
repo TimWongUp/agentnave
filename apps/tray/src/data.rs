@@ -259,6 +259,12 @@ impl Reader {
 
     /// Installed CLI names from the existing prepared members view.
     pub(crate) fn usage_uncovered(&self) -> Vec<String> {
+        if crate::providers::PROVIDERS
+            .iter()
+            .all(|name| crate::usage::COVERED_PROVIDERS.contains(name))
+        {
+            return Vec::new();
+        }
         let response = self.members(false);
         let value: Value = serde_json::from_slice(&response.body).unwrap_or_default();
         value["detected"]

@@ -59,11 +59,7 @@ fn configure(mut command: Command, executable: &Path, args: &[&str]) -> Command 
     if let Some(path) = search_path(executable) {
         command.env("PATH", path);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    crate::process::hide_window(&mut command);
     // Its own process group, so a timeout also stops descendants holding the pipes.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);

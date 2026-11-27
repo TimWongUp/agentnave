@@ -141,14 +141,25 @@ fn push_unique(list: &mut Vec<String>, item: String) {
 
 #[cfg(windows)]
 fn system_proxy_url() -> Option<String> {
-    if read("ProxyEnable")
-        .as_deref()
-        .is_none_or(|value| !enabled(value))
-    {
+    let key = windows_registry::CURRENT_USER
+        .open(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+    let on = key
+        .get_u32("ProxyEnable")
+        .map(|value| value == 1)
+        .ok()
+        .or_else(|| {
+            key.get_string("ProxyEnable")
+                .ok()
+                .map(|value| enabled(&value))
+        })
+        .unwrap_or(false);
+    if !on {
         return None;
     }
-    let server = read("ProxyServer")?;
-    Some(proxy_url(&server))
+    let server = key.get_string("ProxyServer").ok()?;
+    let server = server.trim();
+    (!server.is_empty()).then(|| proxy_url(server))
 }
 
 #[cfg(target_os = "macos")]
@@ -247,34 +258,6 @@ fn proxy_url(server: &str) -> String {
     } else {
         format!("http://{entry}")
     }
-}
-
-/// One value from the WinINET settings key.
-#[cfg(windows)]
-fn read(name: &str) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    let mut command = std::process::Command::new("reg");
-    command
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v",
-            name,
-        ])
-        .current_dir(crate::temp_dir::usable())
-        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    crate::temp_dir::apply_to_command(&mut command);
-    let output = command.output().ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines().find_map(|line| {
-        line.trim_start()
-            .strip_prefix(name)?
-            .split_once("    REG_")
-            .map(|(_, rest)| {
-                rest.split_once("    ")
-                    .map(|(_, value)| value.trim().to_owned())
-            })?
-    })
 }
 
 #[cfg(test)]

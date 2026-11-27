@@ -43,11 +43,7 @@ pub(super) fn status_with(program: &Path, dir: Option<&Path>) -> Value {
     if let Some(dir) = dir {
         command.env(CONFIG_VARIABLE, dir);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
+    crate::process::hide_window(&mut command);
     let Ok(output) = crate::process::output(command, LIMIT) else {
         return json!({"error": "无法读取登录状态"});
     };

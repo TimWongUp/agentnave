@@ -155,6 +155,7 @@ impl Hosts {
         let path = self.context.find(binary).ok_or("未找到此宿主的 CLI")?;
         let mut command = std::process::Command::new(&path);
         crate::temp_dir::strip_child_env(&mut command);
+        crate::process::hide_window(&mut command);
         command
             .args(args)
             .envs(crate::temp_dir::sanitize_env_map(&self.context.env))

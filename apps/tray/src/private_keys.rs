@@ -34,8 +34,6 @@ pub(crate) fn write_private_json(root: &Path, name: &str, value: &Value) -> Resu
 /// before writing secret bytes into the temporary file.
 #[cfg(windows)]
 fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::process::CommandExt;
-
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.trim().is_empty() {
         return Err(std::io::Error::other("无法限制密钥文件权限"));
@@ -51,8 +49,8 @@ fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
             .arg("/inheritance:r")
             .arg("/grant:r")
             .arg(format!("{principal}:(F)"))
-            .current_dir(crate::temp_dir::usable())
-            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            .current_dir(crate::temp_dir::usable());
+        crate::process::hide_window(&mut command);
         crate::temp_dir::apply_to_command(&mut command);
         command.status()
     };
