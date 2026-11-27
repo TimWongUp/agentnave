@@ -229,8 +229,9 @@
       rec.control = control;
       rec.buttons = buttons;
       rec.choicesKey = choicesKey;
+      rec.thumb?.destroy?.();
       rec.thumb = globalThis.ANMotion?.attachThumb?.(control, ".segment-btn.active") || null;
-      rec.thumb?.sync(true);
+      rec.thumbInstant = true;
     } else {
       rec.control.setAttribute("aria-label", label);
       for (const { choice, btn } of rec.buttons) {
@@ -239,7 +240,6 @@
         btn.setAttribute("aria-checked", String(active));
         btn.disabled = disabled;
       }
-      rec.thumb?.sync(false);
     }
     return rec.row;
   }
@@ -255,7 +255,15 @@
       if (typeof AN.reconcile === "function" && typeof box.insertBefore === "function") AN.reconcile(box, nodes);
       else box.replaceChildren(...nodes);
     }
-    for (const item of shown) rows.get(item.key)?.thumb?.sync(false);
+    const batch = [];
+    for (const item of shown) {
+      const rec = rows.get(item.key);
+      if (!rec?.thumb) continue;
+      batch.push({ thumb: rec.thumb, instant: Boolean(rec.thumbInstant) });
+      rec.thumbInstant = false;
+    }
+    if (globalThis.ANMotion?.syncThumbs) globalThis.ANMotion.syncThumbs(batch);
+    else for (const { thumb, instant } of batch) thumb.sync(instant);
   }
 
   async function refresh() {

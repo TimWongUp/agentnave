@@ -172,29 +172,47 @@ globalThis.ANMotion = (() => {
 
   // Sliding thumb controller for persistent segmented controls via ::before (zero extra child DOM).
   function attachThumb(container, activeSelector = '[aria-checked="true"], .active') {
-    if (!container || !container.style) return { sync() {} };
+    if (!container || !container.style) return { measure: () => null, apply() {}, sync() {}, destroy() {} };
     let ready = false;
     let raf = 0;
+    let lastX = null;
+    let lastW = null;
+    let disposed = false;
 
-    function sync(instant = false) {
+    function measure() {
+      if (disposed) return null;
       const btn = container.querySelector?.(activeSelector);
       const btns = container.children ? [...container.children].filter(b => b.offsetWidth > 0 && b.offsetHeight > 0) : [];
       const wrapped = btns.length > 1 && btns.some(b => Math.abs(b.offsetTop - btns[0].offsetTop) > 2);
-      if (!btn || !container.offsetWidth || !btn.offsetWidth || wrapped) {
+      if (!btn || !container.offsetWidth || !btn.offsetWidth || wrapped) return null;
+      return { x: btn.offsetLeft, w: btn.offsetWidth };
+    }
+
+    function apply(snap, instant = false) {
+      if (disposed) return;
+      if (!snap) {
         ready = false;
+        lastX = lastW = null;
         container.removeAttribute?.("data-thumb-ready");
         return;
       }
-      if (instant || !ready || reduced()) {
+      const isRed = reduced();
+      if (instant || !ready || isRed) {
         ready = false;
         container.removeAttribute?.("data-thumb-ready");
       }
-      container.style.setProperty("--thumb-x", `${btn.offsetLeft}px`);
-      container.style.setProperty("--thumb-w", `${btn.offsetWidth}px`);
-      if (!ready && !reduced() && typeof requestAnimationFrame === "function") {
+      if (snap.x !== lastX) {
+        lastX = snap.x;
+        container.style.setProperty("--thumb-x", `${snap.x}px`);
+      }
+      if (snap.w !== lastW) {
+        lastW = snap.w;
+        container.style.setProperty("--thumb-w", `${snap.w}px`);
+      }
+      if (!ready && !isRed && typeof requestAnimationFrame === "function") {
         cancelAnimationFrame(raf);
         raf = requestAnimationFrame(() => {
-          if (container.offsetWidth && !reduced()) {
+          if (!disposed && container.offsetWidth && !reduced()) {
             ready = true;
             container.setAttribute?.("data-thumb-ready", "1");
           }
@@ -202,14 +220,37 @@ globalThis.ANMotion = (() => {
       }
     }
 
+    function sync(instant = false) {
+      apply(measure(), instant);
+    }
+
+    let ro = null;
     if (typeof ResizeObserver === "function") {
-      new ResizeObserver(() => sync(true)).observe(container);
+      ro = new ResizeObserver(() => sync(true));
+      ro.observe(container);
     }
     if (typeof document !== "undefined" && document.fonts?.ready) {
-      document.fonts.ready.then(() => sync(true), () => {});
+      document.fonts.ready.then(() => { if (!disposed) sync(true); }, () => {});
     }
-    return { sync };
+    function destroy() {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      ro?.disconnect?.();
+    }
+    return { measure, apply, sync, destroy };
   }
 
-  return { EASE_OUT, EASE_IN, reduced, visibleAndFocused, ms, scrollBehavior, flipY, dialogEnter, reveal, attachThumb };
+  // Batch read-then-write sync across multiple segmented controls to prevent interleaved reflows.
+  function syncThumbs(thumbs, instant = false) {
+    const entries = (thumbs || []).map((item) => {
+      if (!item) return null;
+      const thumb = typeof item.measure === "function" ? item : item.thumb;
+      if (!thumb) return null;
+      const force = typeof item.measure === "function" ? instant : Boolean(item.instant ?? instant);
+      return { thumb, force, snap: thumb.measure() };
+    }).filter(Boolean);
+    for (const { thumb, force, snap } of entries) thumb.apply(snap, force);
+  }
+
+  return { EASE_OUT, EASE_IN, reduced, visibleAndFocused, ms, scrollBehavior, flipY, dialogEnter, reveal, attachThumb, syncThumbs };
 })();

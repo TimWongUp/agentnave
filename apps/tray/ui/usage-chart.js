@@ -295,14 +295,11 @@ window.UsageChart = (() => {
     const gap = bars ? band / 2 + 8 : 14;
     const cx = x(cursor);
     if (wasHidden) tip.setAttribute?.("data-snap", "1");
-    // Flip at the plot midline using pure GPU translate3d so scrubbing triggers zero sync offsetWidth layout.
-    if (W < 360) {
-      tip.style.transform = `translate3d(${(W / 2).toFixed(1)}px, 0, 0) translateX(-50%)`;
-    } else if (cx > W / 2) {
-      tip.style.transform = `translate3d(${Math.max(168, cx - gap).toFixed(1)}px, 0, 0) translateX(-100%)`;
-    } else {
-      tip.style.transform = `translate3d(${Math.max(0, Math.min(W - 168, cx + gap)).toFixed(1)}px, 0, 0)`;
-    }
+    // Clamp against actual tooltip width (isolated via contain: layout paint on .u-tip) and move via translate3d.
+    const tipW = Math.min(W, tip.offsetWidth || 168);
+    const rawLeft = cx > W / 2 ? cx - gap - tipW : cx + gap;
+    const left = W <= tipW + 8 ? Math.max(0, (W - tipW) / 2) : Math.max(0, Math.min(W - tipW, rawLeft));
+    tip.style.transform = `translate3d(${left.toFixed(1)}px, 0, 0)`;
     tip.hidden = false;
     if (wasHidden && typeof requestAnimationFrame === "function") {
       requestAnimationFrame(() => tip.removeAttribute?.("data-snap"));

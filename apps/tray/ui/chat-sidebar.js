@@ -305,6 +305,7 @@
     const pop = ensureNewChatPop();
     const list = pickableProjects();
     if (!list.length) {
+      pop.replaceChildren();
       void renderNewChatClis({ key: null, title: L("选择文件夹", "Choose folder") }, false);
       return;
     }

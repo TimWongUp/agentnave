@@ -452,11 +452,18 @@ function render(data) {
     }
   }
   const groupsEl = $("groups"), quietEl = $("quiet");
-  const canFlip = state.ready && !AN.isHidden?.() && globalThis.ANMotion?.flipY;
-  if (canFlip) {
-    globalThis.ANMotion.flipY(full, () => reconcile(groupsEl, full), { duration: globalThis.ANMotion.ms("--dur-in", 180) });
-    globalThis.ANMotion.flipY(folded, () => reconcile(quietEl, folded), { duration: globalThis.ANMotion.ms("--dur-in", 180) });
-  } else {
+  const sameOrder = (box, next) => {
+    const kids = box?.children || [];
+    return kids.length === next.length && next.every((n, i) => kids[i] === n);
+  };
+  const moved = !sameOrder(groupsEl, full) || !sameOrder(quietEl, folded);
+  if (moved && state.ready && !AN.isHidden?.() && globalThis.ANMotion?.flipY) {
+    globalThis.ANMotion.flipY(
+      [...full, ...folded],
+      () => { reconcile(groupsEl, full); reconcile(quietEl, folded); },
+      { duration: globalThis.ANMotion.ms("--dur-in", 180) },
+    );
+  } else if (moved) {
     reconcile(groupsEl, full);
     reconcile(quietEl, folded);
   }

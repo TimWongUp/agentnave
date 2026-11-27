@@ -209,4 +209,221 @@ test("usage-chart drawDonut wraps arcs in rotated <g> and drawCursor uses transf
   assert.equal(tip.hidden, false);
   assert.equal(tip.style.left, undefined, "tooltip must not set layout property style.left");
   assert.match(tip.style.transform, /translate3d\(/, "tooltip must position with GPU translate3d");
+
+  // Wide model tooltip near the midline must clamp strictly inside [0, W - tipW] with no overflow.
+  tip.offsetWidth = 260;
+  const narrowGeo = { ...geo, W: 380, x: () => 195 };
+  context.UsageChart.drawCursor(narrowGeo, {
+    plot: mkNode("div"), cursor: 1,
+    buckets: [{ has: true, label: "Day 1" }, { has: true, label: "Day 2" }],
+    items: [{ id: "m", name: "claude-opus-5-5-very-long-model", values: [10, 20], provider: "claude", shade: 0, ci: 0 }],
+    grain: "day", mode: "total", pinned: new Set(), hover: null, dim: "model",
+    fmt: (v) => `$${v}`, hitExact: () => "70%", hitOfBucket: () => 0.7,
+  });
+  const m = /translate3d\(([-\d.]+)px/.exec(tip.style.transform);
+  assert.ok(m, "clamped tooltip transform must be numeric translate3d");
+  const left = Number(m[1]);
+  assert.ok(left >= 0 && left + 260 <= 380, `wide tooltip left=${left} must stay within [0, 120]`);
+});
+
+test("ANMotion primitives cover flipY, dialogEnter, reveal, batch syncThumbs, and reduced-motion degradation", () => {
+  const ops = [];
+  const docEl = {
+    attrs: {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    removeAttribute(k) { delete this.attrs[k]; },
+    getAttribute(k) { return this.attrs[k] ?? null; },
+    dataset: {},
+  };
+  let roDisconnected = 0;
+  const rafs = [];
+  const context = vm.createContext({
+    AN: {
+      reducedMotion: { matches: false, addEventListener() {} },
+      isHidden: () => false,
+    },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    addEventListener() {},
+    getComputedStyle: () => ({ getPropertyValue: (k) => (k === "--dur-in" ? "180ms" : k === "--dur-pop" ? "0.1s" : "") }),
+    document: {
+      documentElement: docEl,
+      visibilityState: "visible",
+      hasFocus: () => true,
+      addEventListener() {},
+      querySelectorAll: () => [],
+    },
+    requestAnimationFrame: (fn) => { rafs.push(fn); return rafs.length; },
+    cancelAnimationFrame() {},
+    ResizeObserver: class {
+      observe() {}
+      disconnect() { roDisconnected += 1; }
+    },
+  });
+  context.window = context;
+  context.globalThis = context;
+  vm.runInContext(read("appearance.js"), context);
+  const M = context.ANMotion;
+
+  assert.equal(M.ms("--dur-in", 99), 180);
+  assert.equal(M.ms("--dur-pop", 99), 100);
+  assert.equal(M.ms("--missing", 77), 77);
+
+  // flipY animates moved elements via translate3d and skips unmoved ones.
+  const calls = [];
+  const a = { offsetParent: {}, offsetTop: 10, isConnected: true, animate: (f, o) => calls.push({ el: "a", f, o }) };
+  const b = { offsetParent: {}, offsetTop: 60, isConnected: true, animate: (f, o) => calls.push({ el: "b", f, o }) };
+  M.flipY([a, b], () => { a.offsetTop = 60; b.offsetTop = 60; }, { duration: 150 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].el, "a");
+  assert.equal(calls[0].f[0].transform, "translate3d(0, -50px, 0)");
+
+  // dialogEnter & reveal invoke WAAPI when visible/focused, and skip translate in reduced motion.
+  const dlgCalls = [];
+  M.dialogEnter({ animate: (f, o) => dlgCalls.push({ f, o }) });
+  assert.equal(dlgCalls.length, 1);
+  assert.ok(dlgCalls[0].f[0].transform);
+  context.ANAppearance.applyPreferences({ motion: "reduce" });
+  const revCalls = [];
+  M.reveal({ animate: (f, o) => revCalls.push({ f, o }) }, { dy: 6 });
+  assert.equal(revCalls.length, 1);
+  assert.equal(revCalls[0].f[0].transform, undefined, "reduced motion must omit transform");
+  context.ANAppearance.applyPreferences({ motion: "full" });
+
+  // syncThumbs performs all reads before all writes (zero interleaved layout thrash) and destroy disconnects RO.
+  const mkSeg = (name, x, w) => {
+    const btn = {
+      get offsetLeft() { ops.push(`read:${name}`); return x; },
+      offsetWidth: w,
+      offsetHeight: 24,
+      offsetTop: 2,
+    };
+    const box = {
+      offsetWidth: 200,
+      children: [btn],
+      attrs: {},
+      querySelector: () => btn,
+      setAttribute(k, v) { ops.push(`write:${name}`); this.attrs[k] = v; },
+      removeAttribute(k) { ops.push(`write:${name}`); delete this.attrs[k]; },
+      style: { setProperty(k, v) { ops.push(`write:${name}:${k}=${v}`); } },
+    };
+    return M.attachThumb(box, ".active");
+  };
+  const t1 = mkSeg("s1", 4, 50);
+  const t2 = mkSeg("s2", 60, 70);
+  M.syncThumbs([t1, t2], false);
+  const lastRead = ops.map((x, i) => (x.startsWith("read:") ? i : -1)).filter((i) => i >= 0).at(-1);
+  const firstWrite = ops.findIndex((x) => x.startsWith("write:"));
+  assert.ok(lastRead < firstWrite, `all reads must finish before writes, got: ${ops.join(", ")}`);
+  t1.destroy();
+  t2.destroy();
+  assert.equal(roDisconnected, 2);
+});
+
+test("update-dialog reuses download progress bar and creates .upd-detail when downloaded transitions from 0 to >0", () => {
+  const mkEl = (sel, attrs = {}, ...kids) => {
+    const parts = sel.split(".");
+    const tag = parts[0] || "div";
+    const classes = new Set(parts.slice(1));
+    const el = {
+      tagName: tag.toUpperCase(),
+      classes,
+      classList: { add: (c) => classes.add(c), contains: (c) => classes.has(c) },
+      attrs: { ...attrs },
+      style: {},
+      children: [],
+      parentNode: null,
+      open: false,
+      textContent: "",
+      addEventListener() {},
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+      focus() {},
+      append(...xs) {
+        for (const x of xs.flat()) {
+          if (!x) continue;
+          if (typeof x === "string") this.textContent += x;
+          else { x.parentNode = this; this.children.push(x); }
+        }
+      },
+      replaceChildren(...xs) { this.children = []; this.textContent = ""; this.append(...xs); },
+      insertBefore(node, ref) {
+        node.parentNode = this;
+        const idx = this.children.indexOf(ref);
+        if (idx >= 0) this.children.splice(idx, 0, node);
+        else this.children.push(node);
+      },
+      querySelector(q) {
+        const match = (n) => {
+          if (q === ".upd-bar i") return n.tagName === "I" && n.parentNode?.classes.has("upd-bar");
+          if (q === ".upd-detail") return n.classes.has("upd-detail");
+          if (q === ".primary") return n.classes.has("primary");
+          return false;
+        };
+        const walk = (n) => {
+          for (const c of n.children) {
+            if (match(c)) return c;
+            const hit = walk(c);
+            if (hit) return hit;
+          }
+          return null;
+        };
+        return walk(this);
+      },
+    };
+    el.append(...kids);
+    return el;
+  };
+  const bodyNode = mkEl("body");
+  let pollIdx = 0;
+  const polls = [
+    { update: { state: "installing", version: "1.18.0", step: "download", downloaded: 0, total: 10485760 }, elapsed: 0 },
+    { update: { state: "installing", version: "1.18.0", step: "download", downloaded: 5242880, total: 10485760 }, elapsed: 1 },
+    { update: { state: "installing", version: "1.18.0", step: "download", downloaded: 10485760, total: 10485760 }, elapsed: 2 },
+    { update: { state: "failed", version: "1.18.0", step: "download", error: "stop-loop" }, elapsed: 3 },
+  ];
+  let barBeforeSecondPoll = null;
+  let barAt100 = null;
+  let detailAt100 = null;
+  let rowHadTold = false;
+  const context = vm.createContext({
+    AN: {
+      h: mkEl,
+      L: (zh) => zh,
+      load: async () => {
+        if (pollIdx === 1) barBeforeSecondPoll = bodyNode.children[0]?.querySelector(".upd-bar i");
+        if (pollIdx === 3) {
+          const dlg = bodyNode.children[0];
+          barAt100 = dlg?.querySelector(".upd-bar i");
+          detailAt100 = dlg?.querySelector(".upd-detail");
+          rowHadTold = Boolean(barAt100?.parentNode?.parentNode?.classes.has("told"));
+        }
+        return polls[pollIdx++] || { update: { state: "idle" } };
+      },
+      post: async () => ({}),
+    },
+    document: { body: bodyNode },
+    addEventListener() {},
+    dispatchEvent() {},
+    CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o?.detail; } },
+    setTimeout: (fn) => { fn(); return 0; },
+  });
+  context.window = context;
+  context.globalThis = context;
+  vm.runInContext(read("update-dialog.js"), context);
+
+  // Trigger download flow: 0 -> 50% -> 100%
+  return context.AN.updateFlow().then(() => {
+    assert.ok(barBeforeSecondPoll, "initial downloaded=0 poll must render .upd-bar i");
+    assert.equal(barAt100, barBeforeSecondPoll, "subsequent download polls must reuse the exact .upd-bar i node");
+    assert.equal(barAt100.style.transform, "scaleX(1.0000)");
+    assert.ok(detailAt100, ".upd-detail must be inserted once downloaded > 0");
+    assert.match(detailAt100.textContent, /100%（10\.0 \/ 10\.0 MB）/);
+    assert.equal(rowHadTold, true, "download row must gain .told when detail is inserted");
+  });
+});
+
+test("chat.css keeps .jump visibility inherited and hides .jump[hidden] in term-mode", () => {
+  const chatCss = read("chat.css");
+  assert.match(chatCss, /\.jump\s*\{[^}]*visibility:\s*inherit;/, ".jump must inherit visibility so .conv.folded hides it");
+  assert.match(chatCss, /\.conv\.term-mode\s+:is\(\.tl,\s*\.jump,\s*\.voice-channel\)\s*\{\s*display:\s*none\s*!important;\s*\}/);
 });

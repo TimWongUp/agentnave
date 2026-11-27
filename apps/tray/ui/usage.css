@@ -189,11 +189,12 @@
 .u-total.is-lo { opacity: .2; }
 
 /* Tooltip: GPU-positioned with contain: layout paint to avoid per-move layout thrashing. */
-.u-tip { position: absolute; top: 4px; left: 0; min-width: 160px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 24px rgb(0 0 0 / .24); pointer-events: none; z-index: 6; font-size: 11px; contain: layout paint; opacity: 1; visibility: visible; transition: transform 90ms var(--ease-out), opacity var(--dur-hover) var(--ease-out), visibility 0s; }
+.u-tip { position: absolute; top: 4px; left: 0; min-width: 160px; max-width: min(320px, calc(100% - 8px)); padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 24px rgb(0 0 0 / .24); pointer-events: none; z-index: 6; font-size: 11px; contain: layout paint; opacity: 1; visibility: inherit; transition: transform 90ms var(--ease-out), opacity var(--dur-hover) var(--ease-out), visibility 0s; }
 .u-tip[data-snap="1"] { transition: opacity var(--dur-hover) var(--ease-out), visibility 0s; }
 .u-tip[hidden] { display: block !important; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--dur-out) var(--ease-out), visibility 0s var(--dur-out); }
 .u-tip-time { color: var(--muted); margin-bottom: 3px; }
-.u-tip-row { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 6px; height: 17px; white-space: nowrap; }
+.u-tip-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 6px; height: 17px; white-space: nowrap; }
+.u-tip-name { overflow: hidden; text-overflow: ellipsis; }
 .u-tip-row b { font-weight: 600; padding-left: 8px; text-align: right; }
 .u-tip-row.sum { height: 18px; font-weight: 600; }
 .u-tip-row.rate { border-bottom: 1px solid var(--line); height: 20px; padding-bottom: 3px; margin-bottom: 3px; color: var(--muted); }

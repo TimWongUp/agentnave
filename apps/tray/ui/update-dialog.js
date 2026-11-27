@@ -97,12 +97,23 @@
     // Reuse the progress bar node during download polls so scaleX interpolates smoothly.
     if (dialog?.open && lastTitle === title && update.step === "download" && update.total > 0) {
       const bar = dialog.querySelector?.(".upd-bar i");
-      const detail = dialog.querySelector?.(".upd-detail");
       if (bar) {
         const percent = Math.min(100, Math.floor(update.downloaded / update.total * 100));
         bar.style.transform = `scaleX(${(percent / 100).toFixed(4)})`;
-        if (detail && update.downloaded > 0) {
-          detail.textContent = L(`${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`, `${percent}% (${mb(update.downloaded)} / ${mb(update.total)} MB)`);
+        if (update.downloaded > 0) {
+          const text = L(`${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`, `${percent}% (${mb(update.downloaded)} / ${mb(update.total)} MB)`);
+          let detail = dialog.querySelector?.(".upd-detail");
+          if (detail) {
+            detail.textContent = text;
+          } else {
+            const barWrap = bar.parentNode;
+            const row = barWrap?.parentNode;
+            if (row && typeof row.insertBefore === "function") {
+              detail = h("span.upd-detail", {}, text);
+              row.classList?.add("told");
+              row.insertBefore(detail, barWrap);
+            }
+          }
         }
         return;
       }

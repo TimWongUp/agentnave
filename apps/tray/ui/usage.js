@@ -752,7 +752,8 @@
     for (const b of document.getElementById("u-dim")?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "dim") === state.dim));
     for (const b of cacheEl?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "cache") === state.cache));
     for (const b of document.getElementById("u-metric")?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "metric") === state.metric));
-    for (const th of segThumbs) th.sync(false);
+    if (globalThis.ANMotion?.syncThumbs) globalThis.ANMotion.syncThumbs(segThumbs, false);
+    else for (const th of segThumbs) th.sync(false);
   }
   function renderSync() {
     const data = state.data, label = document.getElementById("u-updated"), button = document.getElementById("u-refresh");
