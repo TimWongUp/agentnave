@@ -12,8 +12,8 @@
   1. T3 内置终端（`TERM_PROGRAM=t3code`）无论是否携带 `T3CODE_THREAD_ID`，一律按普通连接处理（第 1 节）。
   2. 为消除同一宿主共享 MCP 发现缓存时的主／子互相覆写，所有已识别 T3 宿主的主／子连接发布逐字节一致的角色中立 MCP 说明与工具列表投影（包括子线程按同一份 `t3-seats.json` 投影，未启用 T3 编排时主／子同样一致）；子线程仍由调用入口硬拒绝选位、派发、开会与交接，并在 `recommend_seat` 的简报附言中附子线程身份声明（第 2、4、5 节）。原「主／子线程各自用专用 MCP 说明」与「子线程不碰 `t3-seats.json`」作废。
   3. T3「先查后改」支持在 `access="read"` 时声明后续可能转写（或显式传入非生图可写工位），从非生图可写工位中按本步调查难度与将来改动专业选位（同时补齐非 T3 模式分阶段调查排除生图工位的边界），首轮返回带限定条件的只读附言，默认先开独立 worktree，确认后通过 `t3_thread_send(mode="queue")` 原地续接同一子线程（第 4、5 节）。
-  4. Antigravity 的 `recommend_seat` 回执由「不试 MCP 调用」放宽为「工具已列出时直调，缺失时经 `acp-mcp-call` 标准输入（`-`）桥接」，按当前操作系统只输出对应写法（第 4 节）。
-  5. 明确不主动调用 `t3_worktree_handoff`（主线程留原地，只给写子任务开 `isolation="worktree"`，已在目标任务 worktree 且单人写时用 `shared`）；写任务 `recommend_seat` 回执附中立收尾指引（按 `t3_thread_read` 核对路径与分支，合入后按用户规则或 T3 清理策略决定清理或保留，清理前须确认已合入且目录干净、不强制删除，未合入或有未提交改动一律保留并报路径，第 4、5 节）。
+  4. Antigravity 的 `recommend_seat` 回执由「不试 MCP 调用」放宽为「工具已列出时直调，缺失（或直调明确报工具未启用且未建任务时用同一请求号重试一次）经 `acp-mcp-call` 标准输入（`-`）桥接」，按当前操作系统只输出对应写法（第 4 节）。
+  5. 明确不主动调用 `t3_worktree_handoff`（主线程留原地，需隔离的写任务或先查后改给子任务开 `isolation="worktree"`；非 git 仓库、依赖未提交改动、用户要求原地改，或已在目标任务 worktree 且单人写时用 `shared`）；写任务 `recommend_seat` 回执附中立收尾指引（按 `t3_thread_read` 核对路径与分支，合入后按用户规则或 T3 清理策略决定清理或保留，清理前须确认已合入且目录干净、不强制删除，未合入或有未提交改动一律保留并报路径，第 4、5 节）。
 - 修订（仅在 T3 主线程且用户开启 T3 编排时）：
   - [ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)：T3 编排的对象由 T3 页单独勾选，写什么跟该 boss 的编排档位；开启时勾选的 boss 在分工协作、决策模型、自定义三档的规则块多一节 T3 派法，通用页关闭的 boss 在开启 T3 并勾选时也写块，内容是 T3 专用块（第 2、5 节）。
   - [ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0089](0089-seat-fallback-order.md)、[ADR-0093](0093-decision-seat-random-candidates.md)：T3 主线程用单独的工位目录；选工位时当场定好候选顺序，由 boss 交给 T3 执行（第 3、4 节）。
@@ -75,7 +75,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    - `start_agent`、`start_agents` 在 T3 主线程直接拒绝并指路。开会、收件、转交和历史工具不变。
    - T3 任务由 T3 展示，不进 AgentNave 历史、冷却和同目录提醒。每个选中项的 `brief_suffix` 均附一句 T3 派生子线程身份声明（随简报进入子线程自身上下文，不被共享 MCP 缓存覆盖）；只读靠回执附的只读说明写进简报，不是权限隔离。
    - 当回执包含写任务选中项时，`next` 追加简短的中立收尾提示：不主动调用 `t3_worktree_handoff`，终态后以 `t3_thread_read(childThreadId)` 查实际 `worktreePath` 与 `branch`，核对提交与工作区改动后整合，随后按用户规则或 T3 清理策略决定清理或保留（清理前须确认已合入且目录干净、不强制删除；未合入或有未提交改动一律保留并报路径）。
-   - T3 里的 Antigravity 在 `recommend_seat` 回执中放宽直调约束：若工具列表已露出 `delegate_task` 则直接调用，缺失时经 T3 的 `acp-mcp-call delegate_task -` 标准输入桥接调用（按当前平台仅输出对应写法：POSIX 默认 `<<'T3_JSON'` heredoc，Windows 用 PowerShell 管道）。
+   - T3 里的 Antigravity 在 `recommend_seat` 回执中放宽直调约束：若工具列表已露出 `delegate_task` 则直接调用，缺失（或直调明确报工具未启用且未建任务，用同一 `clientRequestId` 重试一次）时经 T3 的 `acp-mcp-call delegate_task -` 标准输入桥接调用（按当前平台仅输出对应写法：POSIX 默认 `<<'T3_JSON'` heredoc，Windows 用 PowerShell 管道）。
    - T3 子线程里，选工位、派发、开会和转交工具在调用入口硬拒绝，报错明确说明当前是 T3 派生子线程、只完成自己的任务。
 5. **规则与说明**。
    - 开关打开且档位有 T3 模式时，App 在勾选的 Claude、Codex、Antigravity 和 CodeBuddy 各自规则块里把派法分成两节：共用条目只写一份，后面依次是「不在 T3 Code 里时这样派」（普通派法、固定工位行和生图行）和「在 T3 Code 里这样派」（见下，第一条按档位取一种）。自定义档只在用户正文后追加 T3 一节，不改正文、不给正文加标题。开关关着或其他档位不加任何标题。按「在不在 T3 Code 里」分节，不按有没有 `delegate_task` 工具：T3 的系统说明从首步就写明运行环境，工具可能晚加载。首次派发只靠这一节。
@@ -101,7 +101,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    > - 任何派出的任务（含只读调查和评审）先调 AgentNave `recommend_seat`【决策模型：「 由决策模型选工位」】【分工协作、自定义：「：不带任务先取 T3 工位，按任务类型和难度选一个填进 `seat`」】，再按回执用 `delegate_task`；工位是用户指定的设置，同 CLI 也这样派，不用 `start_agent`、`start_agents`。先查后改的调查在 `access="read"` 时标 `may_implement=true`（或指定非生图可写工位），确认后对同一子线程用 `t3_thread_send(mode="queue")` 续接。评审把角色名填进 `seat`，只把允许同时执行的独立任务一次交出。
    > - 选位工具没列出就先加载或稍等，仍不可用就告诉用户，不跳过选位，也不因此自己做完。
    > - 用户点名 CLI、T3 账号或模型时，按 T3 的模型列表直接派，说明用了哪个模型；用不了就告诉用户，不换别的。
-   > - 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3，不主动调用 `t3_worktree_handoff`（主目录上的写任务给子任务开 `isolation:"worktree"`，已在目标任务 worktree 且单人写时用 `shared`）。
+   > - 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3，不主动调用 `t3_worktree_handoff`（需隔离的写任务或先查后改给子任务开 `isolation:"worktree"`；非 git 仓库、依赖未提交改动、要求原地改，或已在目标任务 worktree 且单人写时用 `shared`）。
 
 6. **后台等**。只要识别为 T3 主线程，不看 T3 编排是否打开，Claude、Codex 和 Antigravity 的会议和 AgentNave 派发都用后台命令等收件箱；Claude 与 Codex 在命令结束时由 T3 叫醒，Antigravity 用 `run_command` 把 `WaitMsBeforeAsync` 设成 500 让命令转后台，命令结束时 agy 自己唤醒，不调用 `t3_background_wait`；Antigravity 仍要求 `agy --version` 不低于 [ADR-0114](0114-tui-runtime-like-a-user.md) 的门槛，探测不通过时退回阻塞等待，探测只放行 T3 启动用的 `acp` 子命令；CodeBuddy 在 T3 主线程用阻塞 `wait`，因为它的后台命令结束后不会被唤醒（2026-11-25 实测）；`grok agent …` 模式按 [ADR-0114](0114-tui-runtime-like-a-user.md) 的非交互宿主处理，只能前台等，探测不放行，交互式 `grok` 不变；Windows 上命令的引号没有核实过能在 T3 用的终端里运行，等待不变；其他宿主在 T3 里没有识别，等待不变；提前返回（如卡住提醒）处理后要重新挂上。
 7. **转交**。T3 内换账号、分叉、新线程用 T3 的；跨出或跨进 T3 用 AgentNave 转交；没说去哪就问。T3 里换账号后聊天 ID 会变，旧会议不能续开，第一版接受。

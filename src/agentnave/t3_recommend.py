@@ -121,8 +121,6 @@ def antigravity_delegate_next(platform: str | None = None) -> str:
     )
 
 
-T3_ANTIGRAVITY_DELEGATE_NEXT = antigravity_delegate_next()
-
 T3_CATALOG_NEXT = (
     "Nothing was started. Choose the T3 seat(s) or review role(s) you need from this catalog and "
     "call recommend_seat with tasks to get ordered delegate_task targets."
@@ -349,6 +347,11 @@ def _seat_choice_label(seat: T3Seat) -> str:
     return f"{name} ({meta}: {seat.description})" if meta else f"{name} ({seat.description})"
 
 
+def _is_staged_candidate(seat: T3Seat) -> bool:
+    """Whether `seat` is a non-image writable task seat usable for a staged investigation."""
+    return seat.access == "write" and seat.kind != IMAGE_KIND and bool(seat.candidates)
+
+
 def _seat_required_error(
     missing: Sequence[T3RecommendTask],
     doc: T3SeatsFile,
@@ -358,11 +361,7 @@ def _seat_required_error(
     buckets: list[str] = []
     for access, staged in needed_kinds:
         if staged:
-            entries = [
-                _seat_choice_label(seat)
-                for seat in doc.seats
-                if seat.access == "write" and seat.kind != IMAGE_KIND and seat.candidates
-            ]
+            entries = [_seat_choice_label(seat) for seat in doc.seats if _is_staged_candidate(seat)]
             label = "access=read (may_implement=true, non-image writable seats)"
         else:
             entries = [
@@ -450,8 +449,7 @@ def _resolve_explicit_seat(
         same_access = [
             _seat_label(s)
             for s in doc.seats
-            if (s.access == "write" and s.kind != IMAGE_KIND if staged else s.access == item.access)
-            and s.candidates
+            if (_is_staged_candidate(s) if staged else (s.access == item.access and s.candidates))
         ]
         access_label = "non-image writable" if staged else f"access={item.access}"
         raise ToolError(
@@ -487,11 +485,7 @@ def _auto_candidates_for_access(
     staged: bool = False,
 ) -> tuple[dict[str, tuple[T3Seat, _CandidateFilter]], _Unavailable | None]:
     if staged:
-        matching = [
-            seat
-            for seat in doc.seats
-            if seat.access == "write" and seat.kind != IMAGE_KIND and seat.candidates
-        ]
+        matching = [seat for seat in doc.seats if _is_staged_candidate(seat)]
         if not matching:
             return {}, _Unavailable(
                 reason=f"No configured non-image writable T3 task seat is available. {T3_STAGED_NOTE}"
