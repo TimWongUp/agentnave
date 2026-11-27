@@ -148,6 +148,12 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     assert rules["sections"]["t3_non_t3_heading"] == "\n\n### 不在 T3 Code 里时这样派\n"
     assert "由决策模型选工位" in rules["sections"]["t3_pick_decision"]
     assert "不带任务先取 T3 工位" in rules["sections"]["t3_pick_boss"]
+    for key in ("t3_pick_decision", "t3_pick_boss"):
+        assert "may_implement=true" in rules["sections"][key]
+        assert 't3_thread_send(mode="queue")' in rules["sections"][key]
+    assert "t3_worktree_handoff" in rules["sections"]["t3_tail"]
+    assert 'isolation:"worktree"' in rules["sections"]["t3_tail"]
+    assert "`shared`" in rules["sections"]["t3_tail"]
     assert all(not step.startswith("t3_") for steps in rules["order"].values() for step in steps)
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
 
@@ -2178,6 +2184,10 @@ def test_t3_seats_file_strict_validation_and_activation(
         encoding="utf-8",
     )
     assert effective_t3_seats(codex) is None
+    assert effective_t3_seats(Host("codex", "env", "codex")) is not None
+    # T3 child threads resolve the exact same catalog as main threads for MCP discovery parity.
+    monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
+    t3.reset_t3_mode_cache()
     assert effective_t3_seats(Host("codex", "env", "codex")) is not None
     # Non-T3 connection stays inactive even in an active mode.
     (tmp_path / "t3-seats.json").write_text("{broken json", encoding="utf-8")

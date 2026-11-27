@@ -75,8 +75,8 @@ from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
 from agentnave.t3 import (
-    T3_CHILD_INSTRUCTIONS,
     T3_CHILD_REFUSED_TOOLS,
+    T3_INACTIVE_CHILD_NOTE,
     T3Mode,
     current_t3_mode,
     t3_child_refusal,
@@ -861,7 +861,7 @@ def build_mcp_instructions(
     t3_preset: T3OrchestrationMode | None = None,
 ) -> str:
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
-    t3_main_active = t3_mode == "main" and t3_preset is not None
+    t3_active = t3_mode in ("main", "child") and t3_preset is not None
     auth_sentence = (
         "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
         "user instruction in this chat; available tools do not authorize dispatching, parallel "
@@ -869,7 +869,7 @@ def build_mcp_instructions(
     )
     skill_sentence = (
         T3_MAIN_SKILL
-        if t3_main_active
+        if t3_active
         else (
             "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
             "verifying) follow tool descriptions and receipt next without reading a Skill first; "
@@ -895,11 +895,11 @@ def build_mcp_instructions(
         "prefer explicit IDs over env injection (which may go stale after chat switches). "
         + provider_selection
     )
-    if t3_mode == "child":
-        return T3_CHILD_INSTRUCTIONS + base
-    if t3_main_active:
+    if t3_active:
         assert t3_preset is not None
         return t3_main_instructions(t3_preset) + base
+    if t3_mode in ("main", "child"):
+        return T3_INACTIVE_CHILD_NOTE + base
     return base
 
 

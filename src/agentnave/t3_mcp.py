@@ -29,10 +29,9 @@ from agentnave.orchestration_roles import IMAGE_KIND
 from agentnave.t3 import current_t3_mode
 from agentnave.t3_recommend import (
     MAX_T3_TASKS,
-    T3_ANTIGRAVITY_DELEGATE_NEXT,
-    T3_RECOMMEND_NEXT,
     T3RecommendSeatPayload,
     T3RecommendTask,
+    antigravity_delegate_next,
     catalog_t3_seats,
     normalize_t3_recommend_args,
     recommend_t3_seats,
@@ -48,23 +47,23 @@ from agentnave.t3_seats import (
 T3_HIDDEN_DISPATCH_TOOLS = frozenset({"start_agent", "start_agents"})
 
 _T3_MAIN_TAIL = (
-    "Then call delegate_task once per item copying candidate[0].target and clientRequestId, "
-    "switching to the next candidate only if T3 creates no task and rejects the instance, model, "
-    "or option. Never use start_agent. Use run_round for meetings (list_members is for meeting "
-    "members only). Waiting, worktrees, and in-T3 thread handoff belong to T3; use handover "
-    "only to cross in or out of T3. "
+    "Call delegate_task per item with candidate[0].target and clientRequestId; switch only if "
+    "T3 creates no task and rejects target/option. No start_agent; run_round is for meetings "
+    "(list_members is for meeting members only). Use delegate_task isolation, not unsolicited "
+    "t3_worktree_handoff; handover crosses T3. In a T3 delegated child thread, do only your task; "
+    "dispatch/meetings/handover are refused. "
 )
 
 T3_MAIN_INSTRUCTIONS_DECISION = (
-    "T3 orchestration is active (decision mode): unless the user named a CLI, T3 account or "
-    "model, call recommend_seat(tasks) before any delegate_task or built-in subagent so the "
-    "decision model picks seats. " + _T3_MAIN_TAIL
+    "T3 orchestration (decision mode): unless the user named a CLI, T3 account or model, call "
+    "recommend_seat(tasks) before any delegate_task or built-in subagent so the decision model "
+    "picks seats. " + _T3_MAIN_TAIL
 )
 
 T3_MAIN_INSTRUCTIONS_BOSS = (
-    "T3 orchestration is active (boss picks seats): unless the user named a CLI, T3 account or "
-    "model, call recommend_seat(tasks) with seat from recommend_seat() before any delegate_task "
-    "or built-in subagent. " + _T3_MAIN_TAIL
+    "T3 orchestration (boss picks seats): unless the user named a CLI, T3 account or model, call "
+    "recommend_seat(tasks) with seat from recommend_seat() before any delegate_task or built-in "
+    "subagent. " + _T3_MAIN_TAIL
 )
 
 T3_MAIN_SKILL = (
@@ -80,11 +79,14 @@ _RECOMMEND_DESC_DECISION = (
     "With 1–8 tasks in decision mode, omit seat so the decision model picks among usable task "
     "seats with matching access (skipped when only one fits), or pass explicit seat (fixed role "
     "name such as worker-easy, custom T3 seat id from the catalog, or review role name) to skip "
-    "the decision model. {image} Returns ordered "
-    "T3 targets (options always included, [] when none), a uuid4 clientRequestId, and read-only "
-    "brief_suffix when access='read'. Errors start with a code: seat_required, not_enabled, "
-    "config_error, no_key, network, rate_limited, auth, rejected, or bad_response. Follow "
-    "receipt next to call T3's delegate_task once per selected item."
+    "the decision model. For an access='read' investigation that may continue into edits in the "
+    "same child thread, pass may_implement=true (or an explicit non-image writable seat) to pick "
+    "a writable seat while keeping the first turn read-only. {image} Returns ordered "
+    "T3 targets (options always included, [] when none), a uuid4 clientRequestId, and "
+    "brief_suffix (child identity plus read-only/staged/image guidance when applicable). "
+    "Errors start with a code: seat_required, not_enabled, config_error, no_key, network, "
+    "rate_limited, auth, rejected, or bad_response. Follow receipt next to call T3's "
+    "delegate_task once per selected item."
 )
 
 _RECOMMEND_DESC_BOSS = (
@@ -95,11 +97,13 @@ _RECOMMEND_DESC_BOSS = (
     "boss chooses seats: pass seat on every item using a fixed role name (such as worker-easy "
     "or explorer-web-hard), a custom T3 seat id from the catalog returned by recommend_seat(), "
     "or a review role name; omitting seat fails with seat_required and lists available seats "
-    "without calling any decision model. {image} "
+    "without calling any decision model. For an access='read' investigation that may continue into "
+    "edits in the same child thread, pass may_implement=true and/or an explicit non-image "
+    "writable seat to keep the first turn read-only on a writable seat. {image} "
     "Returns ordered T3 targets (options always included, [] when none), a uuid4 "
-    "clientRequestId, and read-only brief_suffix when access='read'. Errors start with a code: "
-    "seat_required, not_enabled, config_error. Follow receipt next to call T3's delegate_task "
-    "once per selected item."
+    "clientRequestId, and brief_suffix (child identity plus read-only/staged/image guidance "
+    "when applicable). Errors start with a code: seat_required, not_enabled, config_error. "
+    "Follow receipt next to call T3's delegate_task once per selected item."
 )
 
 _LIST_MEMBERS_DESC = (
@@ -164,9 +168,10 @@ async def t3_recommend_seat(
             description=(
                 "Omit or pass [] to list the T3 seat and review role catalog without calling the "
                 "decision model; or pass 1–8 tasks to resolve T3 seats and ordered delegate_task "
-                "targets (each item specifies task, access read/write, and seat—fixed role name "
-                "such as worker-easy, custom T3 seat id from recommend_seat(), or review role "
-                "name; required in split/custom, optional in decision mode)."
+                "targets (each item specifies task, access read/write, optional may_implement for "
+                "staged access='read' investigations, and seat—fixed role name such as worker-easy, "
+                "custom T3 seat id from recommend_seat(), or review role name; required in "
+                "split/custom, optional in decision mode)."
             ),
         ),
     ] = None,
@@ -184,8 +189,10 @@ async def t3_recommend_seat(
     if not tasks:
         return catalog_t3_seats(doc, mode=mode)
     payload = await recommend_t3_seats(tasks, doc, mode=mode)
-    if runtime.HOST.name == "antigravity" and payload["next"] == T3_RECOMMEND_NEXT:
-        payload["next"] += T3_ANTIGRAVITY_DELEGATE_NEXT
+    if runtime.HOST.name == "antigravity" and any(
+        item["status"] == "selected" for item in payload.get("results", ())
+    ):
+        payload["next"] += antigravity_delegate_next()
     return payload
 
 
@@ -324,7 +331,7 @@ def t3_state_for_host(
     host: Host,
 ) -> tuple[T3SeatsFile | None, T3OrchestrationMode | None, T3SeatsFileError | None]:
     """Return (active_doc, mode, file_error) for this connection without crashing list_tools."""
-    if current_t3_mode(host) != "main":
+    if current_t3_mode(host) not in ("main", "child"):
         return None, None, None
     mode = t3_host_mode(host)
     if mode is None:

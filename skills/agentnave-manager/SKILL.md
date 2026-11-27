@@ -19,7 +19,7 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 
 私聊用 `start_agent`（一个 CLI 做一项任务，结果只回给 boss），会议室用 `run_round`（答案在席位间共享），两者都用 `wait` 收结果。其余工具：`answer_prompt` 代答弹框，`cancel` 取消，`decide_answers` 审核会议答案，`list`、`read_conversation` 读历史，`list_members` 查工位和组员，`clear_provider_cooldown` 解除冷却，`handover` 转交和接手。
 
-在 T3 Code 主线程、当前编排档位支持 T3 模式（分工协作、决策模型、自定义）且开启 T3 编排时，单独任务与评审改由 `recommend_seat` 取候选后交 T3 的 `delegate_task` 执行（分工协作与自定义先不带任务调 `recommend_seat` 取 T3 工位再传 `seat`，决策模型可省略 `seat` 由决策模型选；工位的账号、模型和推理档是用户指定的设置，同 CLI 也用 `delegate_task`；用户点名 CLI、T3 账号或模型时按 T3 自己的模型列表直接按点名派；`list_members` 只用来选会议成员），本 Skill 仅用于开会、评审方法与跨 T3 的 `handover`（会议等待按回执 `next`）。
+在 T3 Code 主线程、当前编排档位支持 T3 模式（分工协作、决策模型、自定义）且开启 T3 编排时，单独任务与评审改由 `recommend_seat` 取候选后交 T3 的 `delegate_task` 执行（分工协作与自定义先不带任务调 `recommend_seat` 取 T3 工位再传 `seat`，决策模型可省略 `seat` 由决策模型选；先查后改的调查在 `access="read"` 时标 `may_implement=true` 或指定非生图可写工位，确认后对同一子线程用 `t3_thread_send(mode="queue")` 续接；工位的账号、模型和推理档是用户指定的设置，同 CLI 也用 `delegate_task`；用户点名 CLI、T3 账号或模型时按 T3 自己的模型列表直接按点名派；`list_members` 只用来选会议成员），T3 工作区与收尾见[多任务编排](references/workflows.md#t3-code-工作区与收尾)，本 Skill 其余部分仅用于开会、评审方法与跨 T3 的 `handover`（会议等待按回执 `next`）。
 
 下面的情况按需再读对应参考，同一上下文只读一次：
 
@@ -70,7 +70,7 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 
 - **交接**：prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就声明 `access=read`）；并行写代码的交接用 `isolation`，需要提交时简报写明提交到当前分支、不推送。
 - **顾问**：`access=read`，prompt 要求给出建议与理由；追问用同一 `session_id` 续接，仍传 `access=read`。
-- **先计划／调查后实现**：可能转入实现的调查、定位或方案设计，首次派发选执行类工位（决策模型档 `seat="auto"`，固定编排档 `seat="worker-<档>"`，点名 CLI 时照常），声明 `access="read"` 并带 `isolation`；简报只写调查一步，不提后续实现。转写前的追问续接仍显式传 `access="read"`。方案确认后默认用同一 `session_id` 续接改为 `access="write"`（若主线已变，先核对差异再改）；要拆成并行或换专业时改新开执行线程并 `forward`。不可用隔离时，首次由 boss 点名执行工位并声明只读再同线程转写，或改新开线程并 `forward`；宿主自带子代理按宿主方式选能写的类型。隔离目录生命周期细节见[多任务编排](references/workflows.md)。
+- **先计划／调查后实现**：可能转入实现的调查、定位或方案设计，首次派发选执行类工位（决策模型档 `seat="auto"`，固定编排档 `seat="worker-<档>"`，点名 CLI 时照常），声明 `access="read"` 并带 `isolation`；简报只写调查一步，不提后续实现。转写前的追问续接仍显式传 `access="read"`。方案确认后默认用同一 `session_id` 续接改为 `access="write"`（若主线已变，先核对差异再改）；要拆成并行或换专业时改新开执行线程并 `forward`。不可用隔离时，首次由 boss 点名执行工位并声明只读再同线程转写，或改新开线程并 `forward`；宿主自带子代理按宿主方式选能写的类型。在 T3 Code 里则是在 `access="read"` 时标 `may_implement=true`（或指定非生图可写工位），首轮按回执默认开 `isolation="worktree"`（不用 `interactionMode="plan"`），确认后对同一 `childThreadId` 调 `t3_thread_send(mode="queue")` 续接并追踪新 `taskId`；若后续重派更强工位，可让新子代理读旧线程记录。隔离目录生命周期与 T3 worktree 细则见[多任务编排](references/workflows.md)。
 - **实现＋复核**：实现者 `write` 用 `isolation`，复核者 `read` 以回执里的路径作 `cwd`，看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
 ### 开会
