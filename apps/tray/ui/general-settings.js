@@ -7,6 +7,8 @@
   let data = null;
   let busy = false;
   let generation = 0;
+  let pending = null; // { key, value } shown immediately while a save is in flight
+  const rows = new Map(); // item.key -> { row, labelEl, control, input, buttons, thumb, choicesKey }
 
   const DEFAULTS = {
     theme: "system",
@@ -121,6 +123,7 @@
   }
 
   function effectiveValue(key) {
+    if (pending && pending.key === key) return pending.value;
     const eff = data?.effective?.general;
     if (eff && Object.hasOwn(eff, key)) return eff[key];
     const pref = data?.preferences?.general;
@@ -137,11 +140,13 @@
   async function save(key, value) {
     if (busy) return;
     busy = true;
+    pending = { key, value };
     render();
     const expected = generation;
     try {
       const res = await post("/app/preferences", { general: { [key]: value } });
       if (generation === expected) {
+        pending = null;
         data = {
           ...data,
           ...res,
@@ -165,43 +170,78 @@
     } catch (err) {
       say(err.message || L("保存失败", "Failed to save"), true);
     } finally {
+      pending = null;
       busy = false;
       render();
     }
   }
 
-  function renderControl(item) {
+  function updateRow(item) {
     const val = effectiveValue(item.key);
     const label = item.label();
     const unavailable = item.key === "autostart" && data?.autostart_available !== true;
     const disabled = busy || unavailable;
+    let rec = rows.get(item.key);
+    if (!rec) {
+      const labelEl = h("span.s-label", {}, label);
+      rec = { row: h("div.s-row", {}, labelEl), labelEl, label, control: null, input: null, buttons: [], thumb: null, choicesKey: "" };
+      rows.set(item.key, rec);
+    } else if (rec.label !== label) {
+      rec.label = label;
+      rec.labelEl.textContent = label;
+    }
     if (item.kind === "switch") {
-      const input = h("input.switch-input", {
-        type: "checkbox",
-        checked: Boolean(val),
-        disabled,
-        "aria-label": label,
-      });
-      input.addEventListener("change", () => save(item.key, input.checked));
-      return input;
+      if (!rec.input) {
+        const input = h("input.switch-input", { type: "checkbox", checked: Boolean(val), disabled, "aria-label": label });
+        input.addEventListener("change", () => save(item.key, input.checked));
+        rec.input = input;
+        rec.control = input;
+        rec.row.append(input);
+      } else {
+        rec.input.checked = Boolean(val);
+        rec.input.disabled = disabled;
+        rec.input.setAttribute("aria-label", label);
+      }
+      return rec.row;
     }
-    const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
-    // A third entry styles that choice, e.g. in its own font.
-    for (const [choice, text, style] of item.choices()) {
-      const active = val === choice;
-      const btn = h(`button.segment-btn${active ? ".active" : ""}`, {
-        type: "button",
-        role: "radio",
-        "aria-checked": String(active),
-        disabled,
-        ...(style && { style }),
-      }, text);
-      btn.addEventListener("click", () => {
-        if (effectiveValue(item.key) !== choice) void save(item.key, choice);
-      });
-      control.append(btn);
+    const choices = item.choices();
+    const choicesKey = choices.map(([c, t]) => `${c}:${t}`).join("|");
+    if (!rec.control || rec.choicesKey !== choicesKey) {
+      const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
+      const buttons = [];
+      for (const [choice, text, style] of choices) {
+        const active = val === choice;
+        const btn = h(`button.segment-btn${active ? ".active" : ""}`, {
+          type: "button",
+          role: "radio",
+          "aria-checked": String(active),
+          disabled,
+          ...(style && { style }),
+        }, text);
+        btn.addEventListener("click", () => {
+          if (effectiveValue(item.key) !== choice) void save(item.key, choice);
+        });
+        control.append(btn);
+        buttons.push({ choice, btn });
+      }
+      if (rec.control) rec.control.replaceWith(control);
+      else rec.row.append(control);
+      rec.control = control;
+      rec.buttons = buttons;
+      rec.choicesKey = choicesKey;
+      rec.thumb?.destroy?.();
+      rec.thumb = globalThis.ANMotion?.attachThumb?.(control, ".segment-btn.active") || null;
+      rec.thumbInstant = true;
+    } else {
+      rec.control.setAttribute("aria-label", label);
+      for (const { choice, btn } of rec.buttons) {
+        const active = val === choice;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-checked", String(active));
+        btn.disabled = disabled;
+      }
     }
-    return control;
+    return rec.row;
   }
 
   function render() {
@@ -210,9 +250,20 @@
     const showCount = Boolean(effectiveValue("tray_count"));
     const shown = ITEMS.filter((item) => (!item.macOnly || shellOS() === "macos") && (item.key !== "tray_font" || showCount));
     for (const [name, box] of Object.entries(roots)) {
-      box?.replaceChildren(...shown.filter((item) => item.group === name)
-        .map((item) => h("div.s-row", {}, h("span.s-label", {}, item.label()), renderControl(item))));
+      if (!box) continue;
+      const nodes = shown.filter((item) => item.group === name).map(updateRow);
+      if (typeof AN.reconcile === "function" && typeof box.insertBefore === "function") AN.reconcile(box, nodes);
+      else box.replaceChildren(...nodes);
     }
+    const batch = [];
+    for (const item of shown) {
+      const rec = rows.get(item.key);
+      if (!rec?.thumb) continue;
+      batch.push({ thumb: rec.thumb, instant: Boolean(rec.thumbInstant) });
+      rec.thumbInstant = false;
+    }
+    if (globalThis.ANMotion?.syncThumbs) globalThis.ANMotion.syncThumbs(batch);
+    else for (const { thumb, instant } of batch) thumb.sync(instant);
   }
 
   async function refresh() {

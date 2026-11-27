@@ -38,20 +38,30 @@
     return out;
   }
 
+  let lastTitle = "";
   function show(title, body, buttons) {
     if (!dialog) {
       dialog = h("dialog.upd");
       dialog.addEventListener("cancel", (e) => { if (running) e.preventDefault(); });
-      dialog.addEventListener("close", () => { if (checking) { checking.cancelled = true; checking = null; } });
+      dialog.addEventListener("close", () => { lastTitle = ""; if (checking) { checking.cancelled = true; checking = null; } });
       document.body.append(dialog);
     }
+    const wasOpen = dialog.open;
+    const stageChanged = wasOpen && title !== lastTitle;
+    lastTitle = title;
     const row = h("div.upd-row", {}, ...buttons.map(([label, run, primary]) => {
       const b = h(`button${primary ? ".primary" : ""}`, { type: "button" }, label);
       b.addEventListener("click", run);
       return b;
     }));
-    dialog.replaceChildren(h("h2.upd-title", {}, title), h("div.upd-body", {}, ...body), row);
-    if (!dialog.open) dialog.showModal();
+    const bodyEl = h("div.upd-body", {}, ...body);
+    dialog.replaceChildren(h("h2.upd-title", {}, title), bodyEl, row);
+    if (!wasOpen) {
+      dialog.showModal();
+      globalThis.ANMotion?.dialogEnter?.(dialog);
+    } else if (stageChanged) {
+      globalThis.ANMotion?.reveal?.(bodyEl, { dy: 0, duration: 120 });
+    }
     dialog.querySelector(".primary")?.focus();
   }
   const close = () => dialog?.close();
@@ -78,12 +88,37 @@
       return h(`li.now${update.downloaded > 0 ? ".told" : ""}`, {}, label, update.downloaded > 0 && h("span.upd-detail", {}, known
         ? L(`${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`, `${percent}% (${mb(update.downloaded)} / ${mb(update.total)} MB)`)
         : L(`已下载 ${mb(update.downloaded)} MB`, `${mb(update.downloaded)} MB downloaded`)),
-        known && h("div.upd-bar", {}, h("i", { style: `width:${percent}%` })));
+        known && h("div.upd-bar", {}, h("i", { style: `transform:scaleX(${(percent / 100).toFixed(4)})` })));
     }));
   }
   function progress(status) {
     const update = status.update;
-    show(L(`正在更新到 v${update.version}`, `Updating to v${update.version}`), [
+    const title = L(`正在更新到 v${update.version}`, `Updating to v${update.version}`);
+    // Reuse the progress bar node during download polls so scaleX interpolates smoothly.
+    if (dialog?.open && lastTitle === title && update.step === "download" && update.total > 0) {
+      const bar = dialog.querySelector?.(".upd-bar i");
+      if (bar) {
+        const percent = Math.min(100, Math.floor(update.downloaded / update.total * 100));
+        bar.style.transform = `scaleX(${(percent / 100).toFixed(4)})`;
+        if (update.downloaded > 0) {
+          const text = L(`${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`, `${percent}% (${mb(update.downloaded)} / ${mb(update.total)} MB)`);
+          let detail = dialog.querySelector?.(".upd-detail");
+          if (detail) {
+            detail.textContent = text;
+          } else {
+            const barWrap = bar.parentNode;
+            const row = barWrap?.parentNode;
+            if (row && typeof row.insertBefore === "function") {
+              detail = h("span.upd-detail", {}, text);
+              row.classList?.add("told");
+              row.insertBefore(detail, barWrap);
+            }
+          }
+        }
+        return;
+      }
+    }
+    show(title, [
       stepList(update, status.elapsed),
       h("p.upd-note", {}, L("正在运行的任务不受影响。", "Running tasks are not affected.")),
     ], []);

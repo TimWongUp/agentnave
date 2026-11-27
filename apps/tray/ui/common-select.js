@@ -10,6 +10,7 @@
   let typed = "", typedTimer = 0;
   let menus = 0;
   const ids = new WeakMap(); // select -> its list's id, the same each time it opens
+  const leaving = new WeakMap(); // select -> { menu, anim } currently fading out
 
   const disabled = (item) => item.getAttribute("aria-disabled") === "true";
 
@@ -18,12 +19,41 @@
     typed = "";
   }
 
-  function close() {
+  function clearLeaving(select) {
+    const prev = leaving.get(select);
+    if (!prev) return;
+    leaving.delete(select);
+    prev.anim?.cancel?.();
+    prev.menu.remove();
+  }
+
+  function close(instant = false) {
     if (!open) return;
+    const { select, menu } = open;
     forgetTyped();
-    open.menu.remove();
-    for (const name of ["aria-expanded", "aria-controls", "aria-activedescendant"]) open.select.removeAttribute(name);
+    for (const name of ["aria-expanded", "aria-controls", "aria-activedescendant"]) select.removeAttribute(name);
     open = null;
+    const motion = globalThis.ANMotion;
+    if (instant || typeof menu.animate !== "function" || !motion?.visibleAndFocused?.()) {
+      menu.remove();
+      return;
+    }
+    clearLeaving(select);
+    menu.removeAttribute("id");
+    menu.removeAttribute("role");
+    menu.setAttribute("aria-hidden", "true");
+    menu.inert = true;
+    menu.style.pointerEvents = "none";
+    const dur = motion.ms("--dur-out", 140);
+    const anim = menu.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur || 90, easing: motion.EASE_OUT, fill: "forwards" });
+    const entry = { menu, anim };
+    leaving.set(select, entry);
+    const finish = () => {
+      if (leaving.get(select) === entry) leaving.delete(select);
+      menu.remove();
+    };
+    anim.onfinish = finish;
+    anim.oncancel = finish;
   }
 
   function choose(index) {
@@ -108,6 +138,7 @@
 
   function show(select) {
     close();
+    clearLeaving(select);
     if (!ids.has(select)) ids.set(select, `select-menu-${++menus}`);
     const menu = document.createElement("div");
     menu.className = "select-menu";
@@ -121,6 +152,7 @@
     const above = box.top - 8;
     // Below the box unless it fits only above; never over the box itself.
     const up = menu.offsetHeight > below && above > below;
+    menu.setAttribute("data-side", up ? "up" : "down");
     menu.style.minWidth = `${box.width}px`;
     menu.style.maxHeight = `${Math.max(120, up ? above : below) - 4}px`;
     menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - menu.offsetWidth - 8))}px`;
@@ -129,6 +161,10 @@
     select.setAttribute("aria-controls", menu.id);
     open = { select, menu, items, active: select.selectedIndex };
     highlight(select.selectedIndex);
+    // Native macOS menu cadence: crisp opacity appearance, no heavy bounce or lag.
+    if (typeof menu.animate === "function" && globalThis.ANMotion?.visibleAndFocused?.()) {
+      menu.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: globalThis.ANMotion.EASE_OUT });
+    }
   }
 
   const usable = (target) => target instanceof HTMLSelectElement && !target.disabled && !target.multiple && target.size <= 1;
@@ -167,8 +203,8 @@
       End: () => enabled.length && highlight(enabled[enabled.length - 1]),
       Enter: () => choose(open.active),
       " ": () => choose(open.active),
-      Escape: close,
-      Tab: close,
+      Escape: () => close(false),
+      Tab: () => close(false),
     };
     // A space inside a typed prefix is part of it; alone it chooses.
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key !== " " || typed)) {
@@ -182,9 +218,9 @@
     keys[e.key]();
   }, true);
 
-  // The list belongs to where the box was; moving the page or window closes it.
-  addEventListener("scroll", (e) => open && !open.menu.contains(e.target) && close(), true);
-  addEventListener("resize", close);
-  addEventListener("blur", close);
-  document.addEventListener("focusout", (e) => open?.select === e.target && close());
+  // The list belongs to where the box was; moving the page or window closes it immediately.
+  addEventListener("scroll", (e) => open && !open.menu.contains(e.target) && close(true), true);
+  addEventListener("resize", () => close(true));
+  addEventListener("blur", () => close(true));
+  document.addEventListener("focusout", (e) => open?.select === e.target && close(true));
 }

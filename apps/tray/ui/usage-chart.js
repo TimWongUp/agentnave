@@ -279,6 +279,7 @@ window.UsageChart = (() => {
       bandLayer.replaceChildren();
     }
 
+    const wasHidden = tip.hidden;
     const rows = items.filter(s => (s.values[cursor] || 0) > 0).sort((a, b) => (b.values[cursor] || 0) - (a.values[cursor] || 0));
     tip.className = `u-tip${dim === "model" ? " u-mono" : ""}`;
     tip.replaceChildren(
@@ -291,11 +292,18 @@ window.UsageChart = (() => {
         const keyLine = setTone(h(`i.u-key${s.dash ? ".dash" : ""}`), s);
         return h(`div.u-tip-row${isEm ? ".em" : isDim ? ".dimmed" : ""}`, {}, keyLine, h("span.u-tip-name", {}, s.name), h("b", {}, fmt(s.values[cursor] || 0)));
       }));
+    const gap = bars ? band / 2 + 8 : 14;
+    const cx = x(cursor);
+    if (wasHidden) tip.setAttribute?.("data-snap", "1");
+    // Clamp against actual tooltip width (isolated via contain: layout paint on .u-tip) and move via translate3d.
+    const tipW = Math.min(W, tip.offsetWidth || 168);
+    const rawLeft = cx > W / 2 ? cx - gap - tipW : cx + gap;
+    const left = W <= tipW + 8 ? Math.max(0, (W - tipW) / 2) : Math.max(0, Math.min(W - tipW, rawLeft));
+    tip.style.transform = `translate3d(${left.toFixed(1)}px, 0, 0)`;
     tip.hidden = false;
-    const tw = tip.offsetWidth || 168, gap = bars ? band / 2 + 8 : 14;
-    let left = x(cursor) + gap;
-    if (left + tw > W) left = x(cursor) - gap - tw;
-    tip.style.left = `${Math.max(0, Math.min(W - tw, left))}px`;
+    if (wasHidden && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => tip.removeAttribute?.("data-snap"));
+    }
   }
 
   function applyHighlight({ geo, items, pinned, hover, shape, mode, dim, total, metricLabel, fmt, chips, rankRows, arcs, donutCenter }) {
@@ -345,18 +353,24 @@ window.UsageChart = (() => {
     let at = 0;
     const svg = el("svg", { viewBox: "0 0 148 148", role: "img", "aria-label": L("占比", "Share") });
     if (total > 0) {
+      // Group holds rotate(-90 74 74) so CSS transform on each .u-arc translates cleanly without overriding rotation.
+      const ring = el("g", { transform: "rotate(-90 74 74)" });
       for (const s of items) {
         if (!(s.value > 0)) continue;
         const len = s.value / total * C;
+        const theta = ((at + len / 2) / C) * 2 * Math.PI;
         const arc = setTone(el("circle", {
           class: "u-arc", "data-id": s.id, cx: 74, cy: 74, r: radius,
           "stroke-dasharray": `${Math.max(0.8, len - gap).toFixed(2)} ${C.toFixed(2)}`,
-          "stroke-dashoffset": (-at).toFixed(2), transform: "rotate(-90 74 74)",
+          "stroke-dashoffset": (-at).toFixed(2),
         }, el("title", {}, `${s.name} ${fmt(s.value)}`)), s);
+        arc.style?.setProperty?.("--dx", `${(Math.cos(theta) * 3).toFixed(2)}px`);
+        arc.style?.setProperty?.("--dy", `${(Math.sin(theta) * 3).toFixed(2)}px`);
         arcs.push(arc);
-        svg.append(arc);
+        ring.append(arc);
         at += len;
       }
+      svg.append(ring);
     } else {
       svg.append(el("circle", { class: "u-donut-ring-empty", cx: 74, cy: 74, r: radius }));
     }

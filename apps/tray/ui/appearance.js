@@ -8,9 +8,12 @@ window.ANAppearance = (() => {
   let theme = root.dataset.theme || "system";
   let characterStyle = root.dataset.characterStyle || "static";
   let generation = 0;
+  const uiReducedMotion = { get matches() {
+    return root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && motion.matches);
+  } };
   const reducedMotion = { get matches() {
     if (root.dataset.onBattery === "true" && root.dataset.batteryStill === "true") return true;
-    return root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && motion.matches);
+    return uiReducedMotion.matches;
   } };
 
   function applyTheme() {
@@ -89,7 +92,165 @@ window.ANAppearance = (() => {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   addEventListener("DOMContentLoaded", refresh);
   applyTheme();
-  return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
+  return { applyTheme, applyPreferences, themeSwitch, reducedMotion, uiReducedMotion,
     preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle,
       battery_still: root.dataset.batteryStill === "true", pause_unfocused: root.dataset.pauseUnfocused !== "false" }) };
+})();
+
+// Shared lightweight motion primitives for every tray page (zero dependencies, VM-test safe).
+globalThis.ANMotion = (() => {
+  const EASE_OUT = "cubic-bezier(0.2, 0, 0, 1)";
+  const EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
+  const root = document.documentElement;
+  const reduced = () => Boolean(globalThis.ANAppearance?.uiReducedMotion?.matches);
+  const visibleAndFocused = () => typeof document !== "undefined" && !document.hidden
+    && !root.classList?.contains?.("paused") && !root.classList?.contains?.("blurred")
+    && !root.hasAttribute?.("data-window-hidden");
+
+  function ms(name, fallback) {
+    if (typeof getComputedStyle !== "function") return fallback;
+    const raw = getComputedStyle(root).getPropertyValue(name)?.trim();
+    if (!raw) return fallback;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return raw.endsWith("ms") ? n : (raw.endsWith("s") ? n * 1000 : n);
+  }
+
+  function scrollBehavior() {
+    return reduced() ? "auto" : "smooth";
+  }
+
+  // Single-layout vertical FLIP using offsetTop so scroll anchoring never skews deltas.
+  function flipY(nodes, mutate, opts = {}) {
+    const list = [...(nodes || [])].filter(n => n && typeof n.offsetTop === "number" && typeof n.animate === "function");
+    if (!list.length || reduced() || !visibleAndFocused()) { mutate(); return; }
+    const before = new Map();
+    for (const n of list) {
+      if (n.offsetParent !== null) before.set(n, n.offsetTop);
+    }
+    mutate();
+    const duration = opts.duration ?? ms("--dur-view", 260);
+    const easing = opts.easing || EASE_OUT;
+    for (const [n, oldTop] of before) {
+      if (!n.isConnected || n.offsetParent === null) continue;
+      const dy = oldTop - n.offsetTop;
+      if (Math.abs(dy) < 1) continue;
+      n.animate(
+        [{ transform: `translate3d(0, ${dy}px, 0)` }, { transform: "translate3d(0, 0, 0)" }],
+        { duration, easing },
+      );
+    }
+  }
+
+  // Modal <dialog> entrance via WAAPI so blurred/unfocused launches never freeze at opacity 0.
+  function dialogEnter(dialog) {
+    if (!dialog || typeof dialog.animate !== "function") return;
+    if (!visibleAndFocused()) return;
+    const isRed = reduced();
+    const duration = isRed ? ms("--dur-pop", 100) : ms("--dur-pop", 210);
+    const frames = isRed
+      ? [{ opacity: 0 }, { opacity: 1 }]
+      : [
+          { opacity: 0, transform: "translate3d(0, 6px, 0) scale(0.97)" },
+          { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+        ];
+    dialog.animate(frames, { duration, easing: isRed ? "linear" : EASE_OUT });
+  }
+
+  // Subtle GPU-only reveal for newly shown content blocks (never loops, skips when reduced/blurred).
+  function reveal(node, opts = {}) {
+    if (!node || typeof node.animate !== "function" || !visibleAndFocused()) return null;
+    const isRed = reduced();
+    const duration = opts.duration ?? (isRed ? ms("--dur-pop", 100) : ms("--dur-in", 180));
+    const dx = isRed ? 0 : (opts.dx || 0);
+    const dy = isRed ? 0 : (opts.dy ?? 4);
+    const frames = (dx || dy)
+      ? [{ opacity: 0, transform: `translate3d(${dx}px, ${dy}px, 0)` }, { opacity: 1, transform: "translate3d(0, 0, 0)" }]
+      : [{ opacity: 0 }, { opacity: 1 }];
+    return node.animate(frames, { duration, easing: isRed ? "linear" : EASE_OUT, delay: opts.delay || 0, fill: opts.delay ? "backwards" : "none" });
+  }
+
+  // Sliding thumb controller for persistent segmented controls via ::before (zero extra child DOM).
+  function attachThumb(container, activeSelector = '[aria-checked="true"], .active') {
+    if (!container || !container.style) return { measure: () => null, apply() {}, sync() {}, destroy() {} };
+    let ready = false;
+    let raf = 0;
+    let lastX = null;
+    let lastW = null;
+    let disposed = false;
+
+    function measure() {
+      if (disposed) return null;
+      const btn = container.querySelector?.(activeSelector);
+      const btns = container.children ? [...container.children].filter(b => b.offsetWidth > 0 && b.offsetHeight > 0) : [];
+      const wrapped = btns.length > 1 && btns.some(b => Math.abs(b.offsetTop - btns[0].offsetTop) > 2);
+      if (!btn || !container.offsetWidth || !btn.offsetWidth || wrapped) return null;
+      return { x: btn.offsetLeft, w: btn.offsetWidth };
+    }
+
+    function apply(snap, instant = false) {
+      if (disposed) return;
+      if (!snap) {
+        ready = false;
+        lastX = lastW = null;
+        container.removeAttribute?.("data-thumb-ready");
+        return;
+      }
+      const isRed = reduced();
+      if (instant || !ready || isRed) {
+        ready = false;
+        container.removeAttribute?.("data-thumb-ready");
+      }
+      if (snap.x !== lastX) {
+        lastX = snap.x;
+        container.style.setProperty("--thumb-x", `${snap.x}px`);
+      }
+      if (snap.w !== lastW) {
+        lastW = snap.w;
+        container.style.setProperty("--thumb-w", `${snap.w}px`);
+      }
+      if (!ready && !isRed && typeof requestAnimationFrame === "function") {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          if (!disposed && container.offsetWidth && !reduced()) {
+            ready = true;
+            container.setAttribute?.("data-thumb-ready", "1");
+          }
+        });
+      }
+    }
+
+    function sync(instant = false) {
+      apply(measure(), instant);
+    }
+
+    let ro = null;
+    if (typeof ResizeObserver === "function") {
+      ro = new ResizeObserver(() => sync(true));
+      ro.observe(container);
+    }
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      document.fonts.ready.then(() => { if (!disposed) sync(true); }, () => {});
+    }
+    function destroy() {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      ro?.disconnect?.();
+    }
+    return { measure, apply, sync, destroy };
+  }
+
+  // Batch read-then-write sync across multiple segmented controls to prevent interleaved reflows.
+  function syncThumbs(thumbs, instant = false) {
+    const entries = (thumbs || []).map((item) => {
+      if (!item) return null;
+      const thumb = typeof item.measure === "function" ? item : item.thumb;
+      if (!thumb) return null;
+      const force = typeof item.measure === "function" ? instant : Boolean(item.instant ?? instant);
+      return { thumb, force, snap: thumb.measure() };
+    }).filter(Boolean);
+    for (const { thumb, force, snap } of entries) thumb.apply(snap, force);
+  }
+
+  return { EASE_OUT, EASE_IN, reduced, visibleAndFocused, ms, scrollBehavior, flipY, dialogEnter, reveal, attachThumb, syncThumbs };
 })();

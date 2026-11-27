@@ -438,12 +438,19 @@
     });
   }
 
+  let justOpenedRankId = null;
   function rankRowNode(s, dim, total, buckets, redrawAll) {
     const isProv = dim === "provider", isModel = dim === "model";
     const hasSubs = Boolean(s.subs?.length), open = hasSubs && state.open.has(s.id);
     const subTip = isModel ? L(`${s.name} 工具明细`, `${s.name} by tool`) : L(`${s.name} 模型明细`, `${s.name} models`);
     const twist = hasSubs ? h("button.u-twist", { type: "button", "data-open": s.id, "aria-expanded": String(open), "aria-label": subTip }, chevronSvg()) : null;
-    twist?.addEventListener("click", e => { e.stopPropagation(); state.open[state.open.has(s.id) ? "delete" : "add"](s.id); redrawAll(); });
+    twist?.addEventListener("click", e => {
+      e.stopPropagation();
+      const willOpen = !state.open.has(s.id);
+      state.open[willOpen ? "add" : "delete"](s.id);
+      justOpenedRankId = willOpen ? s.id : null;
+      redrawAll();
+    });
     const nameBlock = isProv ? h("span.u-rname", {}, tile(s.provider), h("em", {}, s.name))
       : h("span.u-rname", {}, h("i.u-dot", toneProps(s.provider, s.shade, s.ci, s.family)), h("em", {}, s.name));
     const under = h("span.u-under", {}, isModel && s.vendor ? h("span.u-vendor", {}, h("i.u-dot", toneProps(s.provider, 0, s.ci, s.family)), span("", s.vendor)) : null, h("span.u-track", {}, fill(h("i"), total > 0 ? s.value / total : 0)));
@@ -456,7 +463,12 @@
     }, h(`span.u-lead${hasSubs ? "" : ".flat"}`, {}, twist, h("span.u-who", {}, nameBlock, under)),
     h("span.u-spark-cell", {}, spark), valNode, span(`num u-price${s.price == null ? " dim" : ""}`, fmtPrice(s.price)),
     h("span.num", {}, h("span.u-delta", {}, ...deltaNodes(s.delta, metricTone()))), span("num u-hit", pct(s.hit), hitExact(s.hit))), s);
-    return { row, subs: open ? rankSubRows(s, total) : [] };
+    const subs = open ? rankSubRows(s, total) : [];
+    if (open && justOpenedRankId === s.id) {
+      justOpenedRankId = null;
+      subs.forEach((sub, idx) => globalThis.ANMotion?.reveal?.(sub, { dy: -4, duration: 160, delay: Math.min(idx, 3) * 18 }));
+    }
+    return { row, subs };
   }
 
   function rankCard(items, total, buckets, redrawAll) {
@@ -512,17 +524,20 @@
   }
 
   function wirePlotEvents(plot, buckets, grain, getGeo, syncHighlight, drillAt) {
-    const indexAt = e => getGeo()?.at((e.clientX || 0) - (plot.getBoundingClientRect?.()?.left || 0)) ?? 0;
+    let cachedLeft = null;
+    const plotLeft = () => (cachedLeft != null ? cachedLeft : (cachedLeft = plot.getBoundingClientRect?.()?.left || 0));
+    const indexAt = e => getGeo()?.at((e.clientX || 0) - plotLeft()) ?? 0;
     const move = e => {
       if (!getGeo()) return;
       const i = indexAt(e), next = buckets[i]?.has ? i : null;
       if (next !== state.cursor) { state.cursor = next; syncHighlight(); }
     };
+    plot.addEventListener("pointerenter", () => { cachedLeft = plot.getBoundingClientRect?.()?.left || 0; });
     plot.addEventListener("pointermove", move);
-    plot.addEventListener("pointerdown", move);
-    plot.addEventListener("pointerleave", e => { if (e.pointerType !== "touch") { state.cursor = null; syncHighlight(); } });
-    plot.addEventListener("click", e => { if (grain === "day" && getGeo()) drillAt(indexAt(e)); });
-    plot.addEventListener("blur", () => { state.cursor = null; syncHighlight(); });
+    plot.addEventListener("pointerdown", e => { cachedLeft = null; move(e); });
+    plot.addEventListener("pointerleave", e => { cachedLeft = null; if (e.pointerType !== "touch") { state.cursor = null; syncHighlight(); } });
+    plot.addEventListener("click", e => { cachedLeft = null; if (grain === "day" && getGeo()) drillAt(indexAt(e)); });
+    plot.addEventListener("blur", () => { cachedLeft = null; state.cursor = null; syncHighlight(); });
     plot.addEventListener("keydown", e => {
       if (e.key === "Enter" && state.cursor != null) { e.preventDefault(); drillAt(state.cursor); return; }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -709,6 +724,7 @@
         const next = btn.getAttribute("aria-expanded") !== "true";
         btn.setAttribute("aria-expanded", String(next));
         detail.hidden = !next;
+        if (next) globalThis.ANMotion?.reveal?.(detail, { dy: -4, duration: 180 });
         state.openProjects[next ? "add" : "delete"](key);
       });
       return h("section.u-card.u-project", {}, btn, detail);
@@ -716,6 +732,10 @@
   }
 
   // ---- page render & wiring ----------------------------------------------------------
+  const segThumbs = ["u-view", "u-range", "u-dim", "u-cache", "u-metric"]
+    .map(id => globalThis.ANMotion?.attachThumb?.(document.getElementById(id), '[aria-checked="true"]'))
+    .filter(Boolean);
+  let lastViewSig = "";
   function renderControls() {
     for (const b of document.getElementById("u-view")?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "view") === state.view));
     for (const b of document.getElementById("u-range")?.children || []) {
@@ -732,6 +752,8 @@
     for (const b of document.getElementById("u-dim")?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "dim") === state.dim));
     for (const b of cacheEl?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "cache") === state.cache));
     for (const b of document.getElementById("u-metric")?.children || []) b.setAttribute("aria-checked", String(dataAttr(b, "metric") === state.metric));
+    if (globalThis.ANMotion?.syncThumbs) globalThis.ANMotion.syncThumbs(segThumbs, false);
+    else for (const th of segThumbs) th.sync(false);
   }
   function renderSync() {
     const data = state.data, label = document.getElementById("u-updated"), button = document.getElementById("u-refresh");
@@ -757,7 +779,11 @@
     if (!force && sig === state.sig) return;
     state.sig = sig; state.redraw = null; state._escClear = null;
     if (!data) return body.replaceChildren(empty(state.error ? L("暂时读不到用量，稍后会自动重试", "Usage is unavailable, retrying shortly") : ""));
+    const viewSig = `${state.view}|${state.range}|${state.dim}|${state.metric}|${state.cache}|${state.mode}|${state.shape}`;
+    const viewChanged = Boolean(lastViewSig && lastViewSig !== viewSig);
+    lastViewSig = viewSig;
     body.replaceChildren(...(state.view === "projects" ? projects(data) : overall(data)));
+    if (viewChanged) globalThis.ANMotion?.reveal?.(body, { dy: 0, duration: 120 });
   }
   function render() {
     renderControls(); renderSync();

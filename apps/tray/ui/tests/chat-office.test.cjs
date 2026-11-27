@@ -1318,17 +1318,14 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   }
   assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
 
-  // The ⋯ on a header or an agent row opens the same menu just below itself, without reaching the row's own click.
-  let stopped = 0;
-  const click = { preventDefault() {}, stopPropagation() { stopped++; } };
-  context.state.heads.get("project:/w/app").more.listeners.click[0](click);
-  assert.deepEqual(menuCalls.slice(-1), ["/w/app"]);
-  assert.deepEqual(menuEvents.at(-1), [12, 34]);
-  const rowMore = context.state.items.get("g-codex").el.children.at(-1);
-  rowMore.listeners.keydown[0]({ key: "Enter", ...click });
-  assert.deepEqual(rowMenus, [["g-codex", 12, 34]]);
-  assert.equal(stopped, 2);
-  menuCalls.length = 3;
+  // Right-click opens workspaceMenu on agent rows; neither headers nor rows render hover ⋯ buttons.
+  assert.equal(context.state.heads.get("project:/w/app").more, undefined);
+  assert.equal(context.state.heads.get("project:/w/app").el.children.some(n => n.tag === "span.gl-grp-more"), false);
+  const rowEl = context.state.items.get("g-codex").el;
+  assert.equal(rowEl.children.some(n => n.tag === "span.gi-more"), false);
+  for (const fn of rowEl.listeners.contextmenu) fn({ clientX: 24, clientY: 48 });
+  assert.deepEqual(rowMenus, [["g-codex", 24, 48]]);
+  assert.equal(menuEvents.length, 3);
 
   // Pending handover items stay visible even when :handover is folded, and folded headers show status dots.
   storage.set("agentnave.office.fold.project::handover", "1");

@@ -13,6 +13,26 @@ const SHOWN = 4; // desks a card shows while no more than this many work; idle o
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
+// Pre-arm inner shell while hidden so opening the popover glides cleanly without flashing old content.
+if (typeof addEventListener === "function") {
+  let wasHidden = AN.isHidden?.() || false;
+  let armRaf = 0;
+  addEventListener("agentnave:visibility", () => {
+    const nowHidden = AN.isHidden?.() || false;
+    if (nowHidden === wasHidden) return;
+    wasHidden = nowHidden;
+    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(armRaf);
+    const ds = document.documentElement?.dataset;
+    if (!ds) return;
+    if (nowHidden) {
+      ds.panelArm = "true";
+    } else if (typeof requestAnimationFrame === "function") {
+      armRaf = requestAnimationFrame(() => delete ds.panelArm);
+    } else {
+      delete ds.panelArm;
+    }
+  });
+}
 
 // ---------------------------------------------------------------- voice
 // The office owns player decisions; the panel only owns a request waiting for that office.
@@ -431,8 +451,22 @@ function render(data) {
       folded.push(rec.el);
     }
   }
-  reconcile($("groups"), full);
-  reconcile($("quiet"), folded);
+  const groupsEl = $("groups"), quietEl = $("quiet");
+  const sameOrder = (box, next) => {
+    const kids = box?.children || [];
+    return kids.length === next.length && next.every((n, i) => kids[i] === n);
+  };
+  const moved = !sameOrder(groupsEl, full) || !sameOrder(quietEl, folded);
+  if (moved && state.ready && !AN.isHidden?.() && globalThis.ANMotion?.flipY) {
+    globalThis.ANMotion.flipY(
+      [...full, ...folded],
+      () => { reconcile(groupsEl, full); reconcile(quietEl, folded); },
+      { duration: globalThis.ANMotion.ms("--dur-in", 180) },
+    );
+  } else if (moved) {
+    reconcile(groupsEl, full);
+    reconcile(quietEl, folded);
+  }
   $("sec-live").hidden = !full.length;
   $("sec-quiet").hidden = !folded.length;
   setText($("live-count"), L(`${full.length} 个`, `${full.length}`));

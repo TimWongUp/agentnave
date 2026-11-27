@@ -335,7 +335,7 @@ print("Done ->", out_dir)`;
   }
   const guideDialog = buildGuideDialog();
   const guideBtn = h("button.char-guide-btn", { type: "button" }, L("自制与更换指南", "DIY & replace guide"));
-  guideBtn.addEventListener("click", () => guideDialog.showModal?.());
+  guideBtn.addEventListener("click", () => { guideDialog.showModal?.(); globalThis.ANMotion?.dialogEnter?.(guideDialog); });
   const grid = h("div.s-card");
   const motionGroup = document.getElementById("avatar-motion-group");
   root.append(h("div.s-group", {}, h("h2.s-title", {}, L("角色动画", "Character animation")), videoBox),

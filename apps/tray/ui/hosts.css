@@ -19,11 +19,11 @@ button.sum-chip:hover:enabled { text-decoration: underline; }
 .host-head-act button { min-width: 96px; }
 .host-head-act .fine { font-size: 12px; color: var(--muted); text-align: right; }
 .host-readers { max-width: 104px; }
-.member-item-status.is-busy .member-status-dot { animation: pulse-dot 1.4s infinite ease-in-out; }
+.member-item-status.is-busy .member-status-dot { animation: an-pulse-dot 1.4s infinite var(--ease-inout); }
 .hc-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .hc-status .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .hc-status.tone-run { color: var(--run); } .hc-status.tone-warn { color: var(--warn); } .hc-status.tone-bad { color: var(--bad); } .hc-status.tone-muted { color: var(--muted); }
-.hc-status.is-busy .dot { animation: pulse-dot 1.4s infinite ease-in-out; }
+.hc-status.is-busy .dot { animation: an-pulse-dot 1.4s infinite var(--ease-inout); }
 .host-row .host-text { min-width: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
 .host-row .host-text.dim { color: var(--muted); }
 .host-row .fine { font-size: 12px; color: var(--muted); }
@@ -75,8 +75,7 @@ code.path { display: inline-flex; min-width: 0; font: 11.5px/1.5 ui-monospace, "
 
 button.pending { display: inline-flex; align-items: center; gap: 7px; opacity: 1; }
 button.pending:disabled { opacity: .85; }
-.spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: an-spin .8s linear infinite; }
 button.danger-solid { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
 button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness(1.08); }
 
@@ -92,8 +91,4 @@ button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness
 @media (max-width: 520px) {
   .hc-confirm .acts { width: 100%; }
   .hc-confirm .acts button { flex: 1; }
-}
-:root[data-motion="reduce"] :is(.spin, .hc-status.is-busy .dot, .member-item-status.is-busy .member-status-dot) { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="reduce"]):not([data-motion="full"]) :is(.spin, .hc-status.is-busy .dot, .member-item-status.is-busy .member-status-dot) { animation: none; }
 }

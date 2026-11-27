@@ -27,6 +27,7 @@
   let reading = null; // the read in flight
   let again = false; // something changed while it was in flight: read once more after it
   let drawn = "";
+  const prevStepStates = new Map();
 
   // null while preferences could not be read, so nothing is decided or written.
   const savedState = () =>
@@ -242,6 +243,14 @@
       void saveState("skipped");
       render();
     });
+    const newlyDone = [];
+    const listItems = steps.map((step, index) => {
+      const item = stepRow(step, index);
+      const prev = prevStepStates.get(step.id);
+      if (prev && prev !== "done" && step.state === "done") newlyDone.push(item.querySelector?.(".ob-mark"));
+      prevStepStates.set(step.id, step.state);
+      return item;
+    });
     box.replaceChildren(
       h(
         "div.ob-head",
@@ -257,8 +266,17 @@
           "The boss can live in Claude Code, Codex, or another app, or in a terminal you start from the left column; it dispatches work and runs meetings through AgentNave, and this is where you see what the employees are doing.",
         ),
       ),
-      h("ol.ob-steps", {}, ...steps.map(stepRow)),
+      h("ol.ob-steps", {}, ...listItems),
     );
+    const motion = globalThis.ANMotion;
+    if (newlyDone.length && motion && !motion.reduced() && motion.visibleAndFocused()) {
+      for (const mark of newlyDone) {
+        mark?.animate?.(
+          [{ transform: "scale(0.75)", opacity: 0.4 }, { transform: "scale(1.08)", opacity: 1, offset: 0.65 }, { transform: "scale(1)", opacity: 1 }],
+          { duration: motion.ms("--dur-pop", 210), easing: motion.EASE_OUT },
+        );
+      }
+    }
   }
 
   // One read at a time, so a slow answer never lands over a newer one.

@@ -68,7 +68,7 @@ function showHost(match) {
   const host = orderedHosts().find(match);
   if (!host) return;
   selectHost(host.id);
-  $("host-cards").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  $("host-cards").scrollIntoView({ block: "nearest", behavior: globalThis.ANMotion?.scrollBehavior?.() || "smooth" });
 }
 function copyButton(text, label = L("复制", "Copy")) {
   const b = h(
