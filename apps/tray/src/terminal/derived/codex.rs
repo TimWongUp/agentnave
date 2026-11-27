@@ -408,8 +408,8 @@ fn launch_codex(
         return Err("Codex CLI 没有安装".to_owned());
     };
     let sock = codex_server::socket_path(key);
-    let ready_file =
-        isolated.then(|| std::env::temp_dir().join(format!("agentnave-codex-ready-{key}.flag")));
+    let ready_file = isolated
+        .then(|| crate::temp_dir::usable().join(format!("agentnave-codex-ready-{key}.flag")));
     if let Some(path) = &ready_file {
         let _ = fs::remove_file(path);
     }

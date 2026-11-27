@@ -154,7 +154,11 @@ fn system_proxy_url() -> Option<String> {
 #[cfg(target_os = "macos")]
 fn system_proxy_url() -> Option<String> {
     let mut command = std::process::Command::new("/usr/sbin/scutil");
-    command.arg("--proxy").stdin(std::process::Stdio::null());
+    command
+        .arg("--proxy")
+        .current_dir(crate::temp_dir::usable())
+        .stdin(std::process::Stdio::null());
+    crate::temp_dir::apply_to_command(&mut command);
     let output = crate::process::output(command, std::time::Duration::from_secs(5)).ok()?;
     if !output.status.success() {
         return None;
@@ -249,16 +253,18 @@ fn proxy_url(server: &str) -> String {
 #[cfg(windows)]
 fn read(name: &str) -> Option<String> {
     use std::os::windows::process::CommandExt;
-    let output = std::process::Command::new("reg")
+    let mut command = std::process::Command::new("reg");
+    command
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
             "/v",
             name,
         ])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .output()
-        .ok()?;
+        .current_dir(crate::temp_dir::usable())
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    crate::temp_dir::apply_to_command(&mut command);
+    let output = command.output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     text.lines().find_map(|line| {
         line.trim_start()

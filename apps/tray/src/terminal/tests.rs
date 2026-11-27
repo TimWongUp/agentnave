@@ -452,6 +452,11 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "T3CODE_THREAD_ID",
         "T3CODE_HOME",
         "T3code_Thread_Id",
+        "T3_ACP_MCP_NODE",
+        "T3_ACP_MCP_ENTRYPOINT",
+        "ELECTRON_RUN_AS_NODE",
+        "PWD",
+        "OLDPWD",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");

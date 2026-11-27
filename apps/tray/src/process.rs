@@ -54,10 +54,13 @@ fn kill_tree(id: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        command
             .args(["/PID", &id.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .status();
+            .current_dir(crate::temp_dir::usable())
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        crate::temp_dir::apply_to_command(&mut command);
+        let _ = command.status();
     }
 }
 

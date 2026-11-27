@@ -28,10 +28,12 @@ fn wait_for_confirmation() -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // A new App instance shows the page itself; an existing one receives these same arguments
     // through the plugin. This launcher's lifetime is independent of the plugin's exit code.
-    let mut child = std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    command
         .args([channel::REQUEST, &waiter.argument()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .current_dir(crate::temp_dir::usable());
+    crate::temp_dir::apply_to_command(&mut command);
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
     let (mut stream, pid) = waiter.accept().map_err(|e| e.to_string())?;
     // Open before waiting for the answer so PID reuse cannot make us wait for another process.
     let process = Process(

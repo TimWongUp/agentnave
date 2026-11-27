@@ -26,6 +26,7 @@ pub(crate) enum GhStatus {
     Ready,
     NotInstalled,
     NotAuthenticated,
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,13 +120,12 @@ impl GhClient {
         let Some(program) = self.resolve_program() else {
             return GhStatus::NotInstalled;
         };
-        let Ok(out) = self.run_gh(&program, &["auth", "status", "--hostname", "github.com"]) else {
-            return GhStatus::NotAuthenticated;
-        };
-        if out.status.success() {
-            GhStatus::Ready
-        } else {
-            GhStatus::NotAuthenticated
+        match self.run_gh(&program, &["auth", "status", "--hostname", "github.com"]) {
+            Ok(out) if out.status.success() => GhStatus::Ready,
+            Ok(_) => GhStatus::NotAuthenticated,
+            Err(GhError::NotInstalled) => GhStatus::NotInstalled,
+            Err(GhError::NotAuthenticated) => GhStatus::NotAuthenticated,
+            Err(_) => GhStatus::Unknown,
         }
     }
 
@@ -212,12 +212,13 @@ impl GhClient {
         let mut cmd = Command::new(program);
         cmd.args(args);
         cmd.stdin(Stdio::null());
-        cmd.current_dir(std::env::temp_dir());
+        cmd.current_dir(crate::temp_dir::usable());
         for (name, _) in std::env::vars_os() {
             if name.to_str().is_some_and(crate::terminal::parent_session) {
                 cmd.env_remove(name);
             }
         }
+        crate::temp_dir::apply_to_command(&mut cmd);
         cmd.env("GH_PROMPT_DISABLED", "1");
         if self.program.is_none()
             && let Some(path) = crate::detect::search_path(program)
@@ -231,7 +232,11 @@ impl GhClient {
         }
         output(cmd, timeout).map_err(|err| match err {
             OutputError::Timeout => GhError::Other("gh 执行超时".into()),
-            OutputError::Io(e) if e.kind() == std::io::ErrorKind::NotFound => GhError::NotInstalled,
+            OutputError::Io(e)
+                if e.kind() == std::io::ErrorKind::NotFound && !program.is_file() =>
+            {
+                GhError::NotInstalled
+            }
             OutputError::Io(e) => GhError::Other(format!("无法执行 gh：{e}")),
             OutputError::Reader => GhError::Other("读取 gh 输出失败".into()),
         })

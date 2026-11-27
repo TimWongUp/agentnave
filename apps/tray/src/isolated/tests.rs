@@ -1101,3 +1101,16 @@ fn collapsed_rebuild_rollback_failure_with_new_commits_restores_collapsed_and_ke
     assert_eq!(after.phase, "collapsed");
     assert_eq!(git_cmd(&fx.main_root, &["rev-parse", &fx.branch_ref]), tip);
 }
+
+#[test]
+fn git_runner_creates_hooks_dir_in_usable_temp_and_executes_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_cmd(&repo, &["init", "-b", "main"]);
+    let runner = super::git::GitRunner::new().unwrap();
+    let out = runner
+        .run(&repo, &["rev-parse", "--is-inside-work-tree"], &[0], &[])
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
+}

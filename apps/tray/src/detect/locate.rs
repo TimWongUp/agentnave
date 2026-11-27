@@ -225,11 +225,13 @@ pub(super) fn registry_value(key: &str, name: &str) -> Option<String> {
 #[cfg(windows)]
 pub(super) fn registry(args: &[&str]) -> Vec<String> {
     use std::os::windows::process::CommandExt;
-    let Ok(output) = std::process::Command::new("reg")
+    let mut command = std::process::Command::new("reg");
+    command
         .args(args)
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .output()
-    else {
+        .current_dir(crate::temp_dir::usable())
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    crate::temp_dir::apply_to_command(&mut command);
+    let Ok(output) = command.output() else {
         return Vec::new();
     };
     String::from_utf8_lossy(&output.stdout)

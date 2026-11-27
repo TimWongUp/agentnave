@@ -615,11 +615,17 @@ pub(crate) fn browse_address(address: &str) {
 /// Links in replies open in the default browser.
 fn browse(target: &Url) {
     #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg(target.as_str()).spawn();
+    let program = "open";
     #[cfg(windows)]
-    let _ = Command::new("explorer").arg(target.as_str()).spawn();
+    let program = "explorer";
     #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = Command::new("xdg-open").arg(target.as_str()).spawn();
+    let program = "xdg-open";
+    let mut command = Command::new(program);
+    command
+        .arg(target.as_str())
+        .current_dir(crate::temp_dir::usable());
+    crate::temp_dir::apply_to_command(&mut command);
+    let _ = command.spawn();
 }
 
 #[cfg(test)]

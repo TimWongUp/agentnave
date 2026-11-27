@@ -53,5 +53,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 # Ad-hoc signed: enough to run locally and for screenshots, not for distribution.
 codesign --force --deep --sign - "$APP" >/dev/null
-open "$APP"
+(
+  unset TMPDIR CLAUDECODE ELECTRON_RUN_AS_NODE
+  for var in $(env | awk -F= '/^(ANTIGRAVITY|T3_ACP_MCP|T3CODE)_[A-Za-z0-9_]*=/ && $1 != "T3CODE_HOME" { print $1 }'); do
+    unset "$var"
+  done
+  open "$APP"
+)
 echo "已打开 $APP"

@@ -46,7 +46,8 @@ pub(crate) fn install_service_version(
         archive.and_then(|bytes| wheel_from_archive(bytes, version))
     };
     if let Some(wheel) = embedded {
-        let stage = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let stage =
+            tempfile::tempdir_in(crate::temp_dir::usable()).map_err(|error| error.to_string())?;
         let file = stage
             .path()
             .join(format!("agentnave-{version}-py3-none-any.whl"));

@@ -154,9 +154,10 @@ impl Hosts {
         use crate::process::OutputError;
         let path = self.context.find(binary).ok_or("未找到此宿主的 CLI")?;
         let mut command = std::process::Command::new(&path);
+        crate::temp_dir::strip_child_env(&mut command);
         command
             .args(args)
-            .envs(&self.context.env)
+            .envs(crate::temp_dir::sanitize_env_map(&self.context.env))
             .current_dir(&self.context.home)
             .stdin(std::process::Stdio::null());
         // An app started by the Finder has a bare PATH; `#!/usr/bin/env node` CLIs need theirs.

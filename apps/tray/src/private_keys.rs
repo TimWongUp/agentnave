@@ -45,13 +45,16 @@ fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
         .filter(|candidate| candidate.is_file())
         .unwrap_or_else(|| std::path::PathBuf::from("icacls.exe"));
     let run = |principal: &str| {
-        std::process::Command::new(&icacls)
+        let mut command = std::process::Command::new(&icacls);
+        command
             .arg(path.as_os_str())
             .arg("/inheritance:r")
             .arg("/grant:r")
             .arg(format!("{principal}:(F)"))
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .status()
+            .current_dir(crate::temp_dir::usable())
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        crate::temp_dir::apply_to_command(&mut command);
+        command.status()
     };
     if let Ok(domain) = std::env::var("USERDOMAIN")
         && !domain.trim().is_empty()

@@ -427,7 +427,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 23] = [
+const PARENT_SESSION: [&str; 26] = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
@@ -438,6 +438,7 @@ const PARENT_SESSION: [&str; 23] = [
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "GROK_SESSION_ID",
     "GROK_SANDBOX",
+    "ELECTRON_RUN_AS_NODE",
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",
     "AGENTNAVE_HOST_SESSION_ID",
@@ -450,6 +451,8 @@ const PARENT_SESSION: [&str; 23] = [
     // WorkBuddy and CodeBuddy point these at their own live listener.
     "SERVER__PORT",
     "SERVER__HOST",
+    "PWD",
+    "OLDPWD",
     "TERM_PROGRAM",
     "TERM_PROGRAM_VERSION",
 ];
@@ -460,6 +463,7 @@ pub(crate) fn parent_session(name: &str) -> bool {
     name.starts_with("CLAUDE_CODE_")
         || name.starts_with("ANTIGRAVITY_")
         || name.starts_with("HERDR_")
+        || name.starts_with("T3_ACP_MCP_")
         || name.starts_with("T3CODE_")
         || PARENT_SESSION.contains(&name.as_str())
 }
@@ -494,6 +498,7 @@ pub(super) fn command(program: &Path, args: &[String], cwd: &Path) -> CommandBui
     command.args(args);
     command.cwd(cwd);
     strip_parent_session(&mut command, std::env::vars_os().map(|(name, _)| name));
+    crate::temp_dir::apply_to_pty(&mut command);
     if let Some(path) = crate::detect::search_path(program) {
         command.env("PATH", path);
     }

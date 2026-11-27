@@ -80,14 +80,16 @@ pub(super) fn probe(context: &Context) -> Shell {
         .chain(NETWORK_VARIABLES.iter())
         .map(|name| format!("printf '%s\\0%s\\0' '{name}' \"${{{name}-}}\"\n"))
         .collect::<String>();
-    let out = tempfile::tempfile().map_err(|_| "无法暂存 shell 探测结果")?;
+    let out =
+        tempfile::tempfile_in(crate::temp_dir::usable()).map_err(|_| "无法暂存 shell 探测结果")?;
+    let env = crate::temp_dir::sanitize_env_map(&context.env);
     let mut command = Command::new(shell);
     command
         .args(["-l", "-c", &script])
         .env_clear()
-        .envs(&context.env)
+        .envs(&env)
         .env("HOME", &context.home)
-        .current_dir(std::env::temp_dir())
+        .current_dir(crate::temp_dir::usable())
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|_| "无法探测 shell")?)
         .stderr(Stdio::null());

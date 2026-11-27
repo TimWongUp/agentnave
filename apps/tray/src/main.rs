@@ -36,6 +36,7 @@ mod stage;
 mod storage;
 mod t3_models;
 mod t3_seats;
+mod temp_dir;
 mod terminal;
 mod time_format;
 mod tool_dirs;
@@ -146,6 +147,7 @@ pub(crate) struct Tray {
 }
 
 fn main() {
+    temp_dir::sanitize_startup_env();
     uninstall::entry();
     #[cfg(target_os = "macos")]
     window::disable_smart_text_substitutions();

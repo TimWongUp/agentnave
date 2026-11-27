@@ -564,3 +564,12 @@ fn the_default_model_comes_from_settings_then_the_probe_then_the_published_file(
     std::fs::write(account.path().join("settings.json"), r#"{"model":"opus"}"#).unwrap();
     assert_eq!(named(account.path()), some("opus"));
 }
+
+#[test]
+fn probe_command_uses_existing_temp_dir() {
+    let cmd = super::probe::command(Path::new("/bin/echo"), &["ok"]);
+    let cwd = cmd
+        .get_current_dir()
+        .expect("probe command sets current_dir");
+    assert!(cwd.is_dir(), "probe cwd must exist: {}", cwd.display());
+}

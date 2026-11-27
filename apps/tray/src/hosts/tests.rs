@@ -2602,3 +2602,61 @@ fn codex_host_execution_keeps_codex_app_ahead_of_chatgpt() {
     assert_eq!(hosts.context.find("codex"), Some(chatgpt));
     assert_eq!(host(&hosts, "codex").label, "Codex");
 }
+
+#[cfg(unix)]
+#[test]
+fn roots_probe_sanitizes_parent_session_and_broken_tmpdir_in_context_env() {
+    let (_temp, mut hosts) = fixture();
+    let script = hosts.context.home.join("fake-shell-env");
+    let dumped = hosts.context.home.join("env-dump.txt");
+    let mut body = format!(
+        "#!/bin/sh\nprintf 'TMPDIR=%s\\nCLAUDECODE=%s\\nT3_ACP_MCP_NODE=%s\\nT3CODE_HOME=%s\\n' \"${{TMPDIR-}}\" \"${{CLAUDECODE-}}\" \"${{T3_ACP_MCP_NODE-}}\" \"${{T3CODE_HOME-}}\" > \"{}\"\n",
+        dumped.display()
+    );
+    for name in roots::VARIABLES {
+        body.push_str(&format!("printf '{name}\\0\\0'\n"));
+    }
+    executable_file(&script, &body);
+    let missing_tmp = hosts.context.home.join("vanished-tmpdir");
+    hosts
+        .context
+        .env
+        .insert("SHELL".into(), script.display().to_string());
+    hosts
+        .context
+        .env
+        .insert("TMPDIR".into(), missing_tmp.display().to_string());
+    hosts.context.env.insert("CLAUDECODE".into(), "1".into());
+    hosts
+        .context
+        .env
+        .insert("T3_ACP_MCP_NODE".into(), "/node".into());
+    hosts
+        .context
+        .env
+        .insert("T3CODE_HOME".into(), "/keep/t3".into());
+
+    let values = roots::probe(&hosts.context).unwrap();
+    assert!(values.is_empty());
+    let text = fs::read_to_string(&dumped).unwrap();
+    let tmp_line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("TMPDIR="))
+        .unwrap();
+    assert!(
+        Path::new(tmp_line).is_dir(),
+        "TMPDIR should be repaired to an existing dir, got {tmp_line:?}"
+    );
+    assert!(
+        text.contains("CLAUDECODE=\n"),
+        "CLAUDECODE must be stripped"
+    );
+    assert!(
+        text.contains("T3_ACP_MCP_NODE=\n"),
+        "T3_ACP_MCP_NODE must be stripped"
+    );
+    assert!(
+        text.contains("T3CODE_HOME=/keep/t3\n"),
+        "T3CODE_HOME must be preserved"
+    );
+}

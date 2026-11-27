@@ -32,7 +32,7 @@ static CATALOGS: LazyLock<Mutex<HashMap<String, Vec<Voice>>>> =
 fn root(shared: &Path) -> PathBuf {
     if crate::PREVIEW {
         dirs::data_dir()
-            .unwrap_or_else(std::env::temp_dir)
+            .unwrap_or_else(crate::temp_dir::usable)
             .join("com.agentnave.preview")
             .join("voice")
     } else {
