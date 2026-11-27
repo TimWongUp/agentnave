@@ -219,8 +219,7 @@
 .u-clear-pins:hover:enabled, .u-more-chips:hover:enabled { color: var(--ink); }
 
 /* Bottom Split: Rank + Donut & Token Composition */
-.u-split { display: grid; grid-template-columns: minmax(0, 1.24fr) minmax(0, .76fr); gap: 10px; align-items: stretch; }
-.u-split.grown { align-items: start; }
+.u-split { display: grid; grid-template-columns: minmax(0, 1.24fr) minmax(0, .76fr); gap: 10px; align-items: start; }
 .u-rank { display: flex; flex-direction: column; padding: 10px 8px 8px; container-type: inline-size; }
 .u-rrow { display: grid; grid-template-columns: minmax(0, 1fr) 42px 58px 46px 44px 34px; align-items: center; column-gap: 6px; padding: 0 8px 0 4px; width: 100%; text-align: left; border-radius: 7px; }
 .u-rrow > .num { text-align: right; white-space: nowrap; }
@@ -229,16 +228,17 @@
 .u-rrow.head button:first-child { text-align: left; padding-left: 16px; }
 .u-rrow.head button:hover:enabled, .u-rrow.head button.on { color: var(--ink); }
 .u-rrow.head button.on { font-weight: 650; }
-.u-rrow.item { flex: 1 0 34px; max-height: 48px; cursor: pointer; transition: opacity var(--dur-in) var(--ease-out), background-color var(--dur-hover) var(--ease-out); }
+.u-rrow.item { flex: none; height: 44px; cursor: pointer; transition: opacity var(--dur-in) var(--ease-out), background-color var(--dur-hover) var(--ease-out); }
+.u-rrow.item.flat { cursor: default; }
 .u-rrow.item:hover { background: var(--hover); }
 .u-rrow.item.is-hi { background: color-mix(in srgb, var(--c) 14%, transparent); }
 .u-rrow.item.is-lo { opacity: .4; }
 .u-rrow.item.is-preview { opacity: .78; }
 .u-lead { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .u-twist { width: 16px; height: 22px; padding: 0; border: 0; background: transparent; flex: none; display: grid; place-items: center; color: var(--muted); border-radius: 4px; }
-.u-twist:hover:enabled { color: var(--ink); background: var(--hover); }
+.u-rrow.item:hover .u-twist { color: var(--ink); }
 .u-twist svg { transition: transform var(--dur-in) var(--ease-out); }
-.u-twist[aria-expanded="true"] svg { transform: rotate(90deg); }
+.u-rrow.item[aria-expanded="true"] .u-twist svg, .u-twist[aria-expanded="true"] svg { transform: rotate(90deg); }
 .u-lead.flat { padding-left: 4px; }
 .u-who { flex: 1; min-width: 0; }
 .u-rname { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -246,11 +246,11 @@
 .u-rname .avatar { display: grid; place-items: center; overflow: hidden; background: #fff; box-shadow: inset 0 0 0 1px var(--line); }
 .u-rname .host-letter { display: grid; place-items: center; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); color: var(--soft); font-weight: 700; }
 .u-tile { flex: none; display: inline-flex; }
-.u-rname em { font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 560; }
+.u-rname em { font-style: normal; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 560; }
 .u-mono .u-rname em, .u-mono .u-tip-name, .u-chip.model, .u-donut-center .model, .u-rrow.sub .u-rname em { font-family: var(--mono); font-size: 11px; letter-spacing: -.02em; }
-.u-under { display: flex; align-items: center; gap: 6px; margin: 3px 0 0 15px; min-width: 0; }
-.u-vendor { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; line-height: 10px; color: var(--muted); max-width: 132px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.u-vendor .u-dot { width: 5px; height: 5px; }
+.u-under { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 15px; min-width: 0; }
+.u-rank.u-dim-provider .u-under { margin-left: 23px; }
+.u-vendor { flex: 0 3 auto; min-width: 0; font-size: 10.5px; line-height: 1.3; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .u-track { flex: 1; height: 3px; border-radius: 3px; background: var(--hover); overflow: hidden; }
 .u-track i { display: block; height: 100%; border-radius: 3px; background: var(--c); }
 .u-spark { display: block; width: 42px; height: 16px; overflow: visible; }
@@ -258,7 +258,7 @@
 .u-val.dim, .u-price.dim { color: var(--faint); }
 .u-price, .u-hit { color: var(--muted); font-size: 11px; }
 .u-delta { display: inline-block; padding: 1px 4px; border-radius: 5px; background: var(--hover); color: var(--ink); font-size: 10.5px; }
-.u-rrow.sub { flex: none; height: 23px; color: var(--muted); font-size: 11px; }
+.u-rrow.sub { flex: none; height: 26px; color: var(--muted); font-size: 11px; }
 .u-rrow.sub .u-rname { padding-left: 22px; gap: 6px; }
 .u-rrow.sub .u-rname .avatar, .u-rrow.sub .u-rname .host-letter { width: 14px; height: 14px; border-radius: 3px; font-size: 8.5px; }
 .u-rrow.sub .u-dot { width: 6px; height: 6px; }
@@ -272,11 +272,11 @@
 }
 
 /* Side: Donut & Composition */
-.u-side { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+.u-side { display: flex; flex-direction: column; justify-content: flex-start; gap: 12px; padding: 12px 14px; }
 .u-donut { position: relative; width: 148px; height: 148px; margin: 0 auto; flex: none; }
 .u-donut svg { display: block; width: 148px; height: 148px; }
 /* Donut arcs emphasize by pure GPU outward translate along their bisector (zero stroke-width repaint). */
-.u-arc { fill: none; stroke: var(--c); stroke-width: 12; cursor: pointer; transition: transform var(--dur-in) var(--ease-out), opacity var(--dur-in) var(--ease-out); }
+.u-arc { fill: none; stroke: var(--c); stroke-width: 12; transition: transform var(--dur-in) var(--ease-out), opacity var(--dur-in) var(--ease-out); }
 .u-arc.is-hi { transform: translate3d(var(--dx, 0px), var(--dy, 0px), 0); }
 .u-arc.is-lo { opacity: .25; }
 .u-arc.is-preview { opacity: .82; transform: translate3d(calc(var(--dx, 0px) * 0.5), calc(var(--dy, 0px) * 0.5), 0); }

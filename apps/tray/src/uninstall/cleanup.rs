@@ -179,7 +179,13 @@ function Remove-AgentNaveTree([string]$path) {
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let mut command = Command::new(powershell);
     command
-        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-EncodedCommand",
+        ])
         .arg(base64::engine::general_purpose::STANDARD.encode(bytes))
         .creation_flags(0x0000_0008) // DETACHED_PROCESS: survive the App's exit.
         .stdin(Stdio::null())

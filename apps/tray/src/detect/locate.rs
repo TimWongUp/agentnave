@@ -173,18 +173,15 @@ pub(super) fn codex_bundled() -> Option<PathBuf> {
 /// Where an app installed itself, according to the uninstall entry Windows keeps for it.
 #[cfg(windows)]
 pub(super) fn install_dir(display_name: &str) -> Option<PathBuf> {
-    for root in UNINSTALL_ROOTS {
-        let Some(key) = uninstall_key(root, display_name) else {
-            continue;
-        };
-        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
+    for key in matching_uninstall_keys(display_name) {
+        if let Some(dir) = registry_string(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
             let dir = registry_path(&dir);
             if dir.is_dir() {
                 return Some(dir);
             }
         }
         // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
-        if let Some(icon) = registry_value(&key, "DisplayIcon")
+        if let Some(icon) = registry_string(&key, "DisplayIcon")
             && let Some(parent) = registry_path(&icon).parent()
         {
             return Some(parent.to_path_buf());
@@ -194,57 +191,78 @@ pub(super) fn install_dir(display_name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-const UNINSTALL_ROOTS: [&str; 3] = [
-    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-];
+fn uninstall_roots() -> [(&'static windows_registry::Key, &'static str); 3] {
+    [
+        (
+            windows_registry::CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            windows_registry::LOCAL_MACHINE,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            windows_registry::LOCAL_MACHINE,
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ]
+}
 
-/// The key whose data mentions `needle`: the uninstall tree is searched by value, since the key
-/// names are GUIDs.
+/// Uninstall entries whose string value data mentions `needle` (case-insensitively), since
+/// uninstall key names are often GUIDs.
 #[cfg(windows)]
-pub(super) fn uninstall_key(root: &str, needle: &str) -> Option<String> {
-    registry(&["query", root, "/s", "/f", needle, "/d"])
-        .into_iter()
-        .find(|line| line.trim_start().starts_with("HKEY_"))
-        .map(|line| line.trim().to_owned())
+fn matching_uninstall_keys(needle: &str) -> Vec<windows_registry::Key> {
+    let needle = needle.to_lowercase();
+    let mut matches = Vec::new();
+    for (hive, path) in uninstall_roots() {
+        let Ok(root) = hive.open(path) else {
+            continue;
+        };
+        let Ok(names) = root.keys() else {
+            continue;
+        };
+        for name in names {
+            let Ok(entry) = root.open(&name) else {
+                continue;
+            };
+            let matched = entry.values().is_ok_and(|values| {
+                values.into_iter().any(|(_, value)| {
+                    String::try_from(value)
+                        .ok()
+                        .is_some_and(|text| text.to_lowercase().contains(&needle))
+                })
+            });
+            if matched {
+                matches.push(entry);
+            }
+        }
+    }
+    matches
 }
 
 #[cfg(windows)]
-pub(super) fn registry_value(key: &str, name: &str) -> Option<String> {
-    registry(&["query", key, "/v", name])
-        .into_iter()
-        .find_map(|line| {
-            let line = line.trim_start().strip_prefix(name)?;
-            let (_, rest) = line.split_once("    REG_")?;
-            let (_, value) = rest.split_once("    ")?;
-            Some(value.trim().to_owned())
-        })
-}
-
-#[cfg(windows)]
-pub(super) fn registry(args: &[&str]) -> Vec<String> {
-    use std::os::windows::process::CommandExt;
-    let mut command = std::process::Command::new("reg");
-    command
-        .args(args)
-        .current_dir(crate::temp_dir::usable())
-        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    crate::temp_dir::apply_to_command(&mut command);
-    let Ok(output) = command.output() else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect()
+fn registry_string(key: &windows_registry::Key, name: &str) -> Option<String> {
+    key.get_string(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
 }
 
 #[cfg(windows)]
 pub(crate) fn store_packages(key: &str) -> Vec<String> {
-    registry(&["query", key])
-        .into_iter()
-        .filter_map(|line| line.trim().rsplit('\\').next().map(str::to_owned))
+    let (hive, subpath) = if let Some(rest) = key.strip_prefix(r"HKCU\") {
+        (windows_registry::CURRENT_USER, rest)
+    } else if let Some(rest) = key.strip_prefix(r"HKLM\") {
+        (windows_registry::LOCAL_MACHINE, rest)
+    } else {
+        return Vec::new();
+    };
+    let Ok(root) = hive.open(subpath) else {
+        return Vec::new();
+    };
+    let Ok(names) = root.keys() else {
+        return Vec::new();
+    };
+    names
         .filter(|name| name.contains('_') && !name.contains(' '))
         .collect()
 }
@@ -270,18 +288,15 @@ pub(super) fn registry_path(value: &str) -> PathBuf {
 /// the user chose and keep no other record (WorkBuddy points `DisplayIcon` at its exe).
 #[cfg(windows)]
 pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
-    for root in UNINSTALL_ROOTS {
-        let Some(key) = uninstall_key(root, display_name) else {
-            continue;
-        };
-        if let Some(icon) = registry_value(&key, "DisplayIcon") {
+    for key in matching_uninstall_keys(display_name) {
+        if let Some(icon) = registry_string(&key, "DisplayIcon") {
             let path = registry_path(&icon);
             if path.is_file() {
                 return Some(path);
             }
         }
         // A folder left behind after uninstalling is no app; its executable must still be there.
-        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
+        if let Some(dir) = registry_string(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
             let exe = registry_path(&dir).join(format!("{display_name}.exe"));
             if exe.is_file() {
                 return Some(exe);

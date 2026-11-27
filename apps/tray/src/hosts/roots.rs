@@ -95,11 +95,7 @@ pub(super) fn probe(context: &Context) -> Shell {
         .stderr(Stdio::null());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
+    crate::process::hide_window(&mut command);
     let mut child = command.spawn().map_err(|_| "无法启动登录 shell")?;
     let started = Instant::now();
     match crate::process::wait(

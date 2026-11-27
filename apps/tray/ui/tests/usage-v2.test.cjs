@@ -470,12 +470,28 @@ test("ranking sort, $/1M fixed denominator, provider twist vs pin, and model dim
   const app = mountUsage();
   await app.answer(0, samplePayload());
 
-  // Twist arrow expands model sub-rows without toggling pin on provider row
-  const claudeRow = app.find(".u-rrow.item").find(r => r.getAttribute("data-id") === "claude");
-  const twist = claudeRow.querySelector(".u-twist");
-  twist.dispatch("click");
+  // Clicking the row or its twist arrow toggles model sub-rows without pinning
+  const claudeChip = () => app.find(".u-chip").find(c => c.getAttribute("data-id") === "claude");
+  const claudeRow = () => app.find(".u-rrow.item").find(r => r.getAttribute("data-id") === "claude");
+  claudeRow().querySelector(".u-twist").dispatch("click");
   assert.equal(app.find(".u-rrow.sub").length, 1);
-  assert.equal(claudeRow.getAttribute("aria-pressed"), "false", "twist does not pin row");
+  assert.equal(claudeRow().getAttribute("aria-expanded"), "true");
+  assert.equal(claudeRow().getAttribute("aria-pressed"), undefined, "ranking row is expandable, not pinnable");
+  assert.equal(claudeChip().getAttribute("aria-pressed"), "false", "twist does not pin row");
+
+  // Clicking the row itself collapses, then Enter re-expands; neither pins
+  claudeRow().dispatch("click");
+  assert.equal(app.find(".u-rrow.sub").length, 0);
+  assert.equal(claudeRow().getAttribute("aria-expanded"), "false");
+  assert.equal(claudeChip().getAttribute("aria-pressed"), "false", "row click does not pin");
+  claudeRow().dispatch("keydown", { key: "Enter" });
+  assert.equal(app.find(".u-rrow.sub").length, 1);
+  assert.equal(claudeChip().getAttribute("aria-pressed"), "false", "row keydown does not pin");
+
+  // Clicking a donut arc does not pin either (pinning is legend chips only)
+  const claudeArc = app.find(".u-arc").find(a => a.getAttribute("data-id") === "claude");
+  claudeArc.dispatch("click");
+  assert.equal(claudeChip().getAttribute("aria-pressed"), "false", "donut click does not pin");
 
   // Sort by $/1M
   const priceSort = app.find(".u-rrow.head button").find(b => b.getAttribute("data-sort") === "price");
@@ -628,16 +644,20 @@ test("model legend labels empty models, merges duplicate names across tools, and
   // Empty model name gets localized fallback
   assert.ok(app.find(".u-chip").some(c => text(c).includes("未知模型")));
 
-  // Pinning a hidden model (#12) from the ranking table surfaces its chip immediately
+  // Clicking a hidden model row (#12) in the ranking table expands its tool breakdown without pinning
   const tailRow = app.find(".u-rrow.item").find(r => r.getAttribute("data-id") === "m-12");
   tailRow.dispatch("click");
-  assert.equal(app.find(".u-chip").length, 11);
-  assert.ok(app.find(".u-chip").some(c => c.getAttribute("data-id") === "m-12"));
+  assert.equal(app.find(".u-rrow.sub.sub-tool").length, 1);
+  assert.equal(app.find(".u-chip").length, 10);
 
-  // Expanding shows all 13 chips and flips button label to "收起"
+  // Expanding shows all 13 chips and flips button label to "收起"; pinning via legend chip keeps it surfaced on collapse
   app.find(".u-more-chips")[0].dispatch("click");
   assert.equal(app.find(".u-chip").length, 13);
   assert.equal(text(app.find(".u-more-chips")[0]), "收起");
+  app.find(".u-chip").find(c => c.getAttribute("data-id") === "m-12").dispatch("click");
+  app.find(".u-more-chips")[0].dispatch("click");
+  assert.equal(app.find(".u-chip").length, 11);
+  assert.ok(app.find(".u-chip").some(c => c.getAttribute("data-id") === "m-12" && c.getAttribute("aria-pressed") === "true"));
 });
 
 test("three dimensions: tools keep split, families merge cross-tool, models merge by base model with tool drilldown", async () => {

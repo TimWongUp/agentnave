@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use tempfile::TempDir;
@@ -150,8 +150,10 @@ impl GitRunner {
         filters_from: &[&Path],
     ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
+        cmd.stdin(Stdio::null());
         cmd.current_dir(crate::temp_dir::usable());
         crate::temp_dir::strip_child_env(&mut cmd);
+        crate::process::hide_window(&mut cmd);
         cmd.arg("--no-pager").arg("-C").arg(cwd);
         for item in [
             "core.fsmonitor=false",

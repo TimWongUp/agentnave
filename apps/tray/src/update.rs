@@ -877,11 +877,7 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
             command.env("PATH", joined);
         }
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    crate::process::hide_window(&mut command);
     let output = output_within(command, SERVICE_TIMEOUT)?;
     if output.status.success() {
         return Ok(());
@@ -928,8 +924,11 @@ pub fn copy_service_command(app: &AppHandle) {
     {
         let mut cmd = std::process::Command::new(program);
         cmd.current_dir(crate::temp_dir::usable())
-            .stdin(std::process::Stdio::piped());
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         crate::temp_dir::apply_to_command(&mut cmd);
+        crate::process::hide_window(&mut cmd);
         if let Ok(mut child) = cmd.spawn() {
             use std::io::Write;
             if let Some(mut stdin) = child.stdin.take() {

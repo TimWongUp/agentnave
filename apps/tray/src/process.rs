@@ -32,7 +32,12 @@ fn kill_posix_group(id: u32) {
 pub(crate) fn kill_group(child: &mut Child) {
     #[cfg(unix)]
     kill_posix_group(child.id());
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        kill_tree(child.id());
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = child.kill();
 }
 
@@ -48,22 +53,39 @@ pub(crate) fn stop(child: &mut Child, direct: bool) {
     let _ = child.wait();
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Suppress console window creation for headless child processes on Windows.
+pub(crate) fn hide_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 fn kill_tree(id: u32) {
     #[cfg(unix)]
     kill_posix_group(id);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         let mut command = Command::new("taskkill");
         command
             .args(["/PID", &id.to_string(), "/T", "/F"])
-            .current_dir(crate::temp_dir::usable())
-            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .current_dir(crate::temp_dir::usable());
+        hide_window(&mut command);
         crate::temp_dir::apply_to_command(&mut command);
         let _ = command.status();
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum OutputError {
     Io(io::Error),
     Timeout,
@@ -74,6 +96,7 @@ pub(crate) enum OutputError {
 pub(crate) fn output(mut command: Command, limit: Duration) -> Result<Output, OutputError> {
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    hide_window(&mut command);
     let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -95,4 +118,29 @@ pub(crate) fn output(mut command: Command, limit: Duration) -> Result<Output, Ou
         .join()
         .map_err(|_| OutputError::Reader)?
         .map_err(OutputError::Io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_runs_hidden_headless_command_within_timeout() {
+        #[cfg(windows)]
+        let mut command = {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "echo", "ok"]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "echo ok"]);
+            cmd
+        };
+        command.stdin(Stdio::null());
+        let out = output(command, Duration::from_secs(5)).expect("command should succeed");
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
 }
