@@ -2018,6 +2018,20 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell script")
+def test_deepseek_profile_routes_run_where_a_deleted_temp_dir_cannot_break_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen, dump = tmp_path / "seen", tmp_path / "dsh"
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "gone"))
+    dump.write_text(f'#!/bin/sh\necho "$(pwd -P) ${{TMPDIR-unset}}" > {seen}\nexit 3\n')
+    dump.chmod(0o755)
+    assert deepseek_adapter.profile_routes(str(dump)) == (None, {})
+    cwd, tmpdir = seen.read_text().split()
+    assert Path(cwd).samefile(deepseek_adapter.usable_temp_dir())
+    assert tmpdir == "unset"
+
+
 def test_deepseek_profile_routes_read_the_composed_entries(tmp_path: Path) -> None:
     dump = tmp_path / "dsh"
     lines = (

@@ -22,6 +22,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.temp_dir import usable_temp_dir
 
 
 def _capture_line(line: bytes) -> bytes:
@@ -66,7 +67,9 @@ class GrokAdapter(AdapterHooks):
         request, discussion = restricted_options(request, self)
         options = self.option_args(request)
         prompt = request.prompt.encode()
-        fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")
+        fd, raw_path = tempfile.mkstemp(
+            prefix="agentnave-prompt-", suffix=".txt", dir=usable_temp_dir()
+        )
         path = Path(raw_path)
         try:
             with os.fdopen(fd, "wb") as prompt_file:

@@ -315,3 +315,40 @@ def test_quota_groups_record_match_and_clear(tmp_path: Path) -> None:
     assert provider_health.matching(health, "codex", "gpt-one") is None
     # A third-party route is not billed by the official account, so it never reads its limits.
     assert CodexAdapter().usage_query("trae-cn/x") is None
+
+
+@pytest.mark.asyncio
+async def test_no_temp_directory_for_the_query_keeps_the_quota_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_scratch(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("the host deleted TMPDIR")
+
+    monkeypatch.setattr(usage_probe.tempfile, "TemporaryDirectory", no_scratch)
+    query = UsageQuery(_script("print('usage')"), lambda _out, _now: None)
+    assert await usage_probe.run_usage_query(query, datetime.now(UTC)) is None
+
+    def same_query(_adapter: ClaudeAdapter, _model: str | None) -> UsageQuery:
+        return query
+
+    monkeypatch.setattr(ClaudeAdapter, "usage_query", same_query)
+    event = {
+        "type": "result",
+        "is_error": True,
+        "errors": ["weekly limit reached"],
+        "session_id": "native-1",
+    }
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+    try:
+        invocation = manager.start(
+            InvocationRequest("claude", "work", tmp_path, provider_options={"model": "test"}),
+            prepared=PreparedCommand(_script(f"print({json.dumps(event)!r})"), tmp_path),
+        )
+        result = await manager.wait(invocation)
+    finally:
+        await manager.shutdown()
+    assert result is not None and result.status is InvocationStatus.FAILED
+    assert result.error is not None and result.error.code != "launch_error"
+    assert result.session_id == "native-1"
+    assert ("claude", None, "test") in provider_health.active(tmp_path)

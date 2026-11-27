@@ -15,6 +15,7 @@ from pathlib import Path
 
 from agentnave.adapters.base import UsageQuery
 from agentnave.processes import SupervisedProcess, spawn_process, terminate_process_tree
+from agentnave.temp_dir import usable_temp_dir
 
 QUERY_SECONDS = 20.0
 _MAX_OUTPUT = 1 << 20
@@ -25,7 +26,13 @@ async def run_usage_query(
     query: UsageQuery, now: datetime, env: Mapping[str, str] | None = None
 ) -> datetime | None:
     """env is added to the child's environment, so the query asks the account that ran out."""
-    with tempfile.TemporaryDirectory(prefix="agentnave-usage-", ignore_cleanup_errors=True) as cwd:
+    try:
+        scratch = tempfile.TemporaryDirectory(
+            prefix="agentnave-usage-", dir=str(usable_temp_dir()), ignore_cleanup_errors=True
+        )
+    except OSError:  # no temp directory: no reset time, never a failed dispatch
+        return None
+    with scratch as cwd:
         try:
             supervised = await spawn_process(
                 query.argv, Path(cwd), unset_env=query.unset_env, extra_env=dict(env or {})
