@@ -97,17 +97,26 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
 .gi.gi-child .gi-meta { color: var(--tone, var(--muted)); font-variant-numeric: tabular-nums; line-height: 16px; min-height: 16px; }
-/* Hover actions overlay the top-right time slot with zero width reflow so timestamps and PR pills never shift. */
+/* Hover actions overlay rows without PR pills (zero reflow + soft title fade); rows with a
+   visible PR/Git pill keep .gi-more in flex flow so the clickable pill is never covered. */
 .gi-more, .gl-grp-more { z-index: 2; display: grid; place-items: center; height: 22px; width: 22px; border-radius: 6px; font-size: 15px; line-height: 1; color: var(--muted); background: var(--surface); box-shadow: 0 0 0 1px var(--line); opacity: 0; pointer-events: none; cursor: pointer; transition: opacity var(--dur-press) var(--ease-out), background-color var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out); }
-.gi-more { position: absolute; right: 10px; top: 5px; }
+.gi-more { position: absolute; right: 8px; top: 50%; margin-top: -11px; }
+.gi:has(.gi-pr:not([hidden])) > .gi-more { position: static; flex: none; width: 0; margin: 0 0 0 -9px; overflow: hidden; box-shadow: none; }
 .gl-grp-more { position: absolute; right: 36px; top: 50%; margin-top: -11px; }
 .gi-more[hidden], .gl-grp-more[hidden] { display: none; }
 .gi:is(:hover, :focus-within) > .gi-more, .gi-more:focus-visible { opacity: 1; pointer-events: auto; }
+.gi:has(.gi-pr:not([hidden])):is(:hover, :focus-within) > .gi-more,
+.gi:has(.gi-pr:not([hidden])) > .gi-more:focus-visible { width: 22px; margin-left: 0; overflow: visible; box-shadow: 0 0 0 1px var(--line); }
 .gl-grp:is(:hover, :focus-within) > .gl-grp-more, .gl-grp-more:focus-visible { opacity: 1; pointer-events: auto; }
+.gi:not(:has(.gi-pr:not([hidden]))):is(:hover, :focus-within):has(> .gi-more:not([hidden])) .gi-top { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 38px), transparent calc(100% - 24px)); mask-image: linear-gradient(to right, #000 calc(100% - 38px), transparent calc(100% - 24px)); }
 .gi:is(:hover, :focus-within):has(> .gi-more:not([hidden])) .gi-top time { visibility: hidden; }
 .gl-grp:has(> .gl-grp-more:not([hidden])):is(:hover, :focus-within) .gl-grp-n { visibility: hidden; }
 .gi-more:hover, .gl-grp-more:hover { color: var(--ink); background: var(--card-hover); }
-@media (hover: none) { .gi-more { opacity: 1; pointer-events: auto; } .gl-grp-more { opacity: 1; pointer-events: auto; } }
+@media (hover: none) {
+  .gi-more { opacity: 1; pointer-events: auto; }
+  .gi:has(.gi-pr:not([hidden])) > .gi-more { width: 22px; margin-left: 0; overflow: visible; box-shadow: 0 0 0 1px var(--line); }
+  .gl-grp-more { opacity: 1; pointer-events: auto; }
+}
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
 .gi-label { min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
