@@ -32,7 +32,6 @@ const AGENT_SESSION_EXACT: &[&str] = &[
     // Config/gateway variables such as `CLAUDE_CODE_USE_BEDROCK` are never listed here.
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SSE_PORT",
-    "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
     "CLAUDE_CODE_ACCOUNT_UUID",
     "CLAUDE_CODE_SESSION_ID",
@@ -62,14 +61,19 @@ const AGENT_SESSION_EXACT: &[&str] = &[
     "SERVER__HOST",
 ];
 
-/// Shell/terminal session variables stripped at startup and from background children, without
-/// triggering a temp-directory reset on their own.
-const SHELL_SESSION_EXACT: &[&str] = &["PWD", "OLDPWD", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
+/// Variables stripped at startup and from background children without triggering a temp-directory
+/// reset on their own (regular terminal vars and persistent auth tokens a user may export globally).
+const STRIP_ONLY_EXACT: &[&str] = &[
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "PWD",
+    "OLDPWD",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+];
 
-#[cfg(unix)]
-const TEMP_ENV_KEYS: &[&str] = &["TMPDIR"];
-#[cfg(windows)]
-const TEMP_ENV_KEYS: &[&str] = &["TMP", "TEMP"];
+/// Cross-platform temporary-directory environment variable names checked by Rust, Python, Node,
+/// and shell tools.
+const TEMP_ENV_KEYS: &[&str] = &["TMPDIR", "TEMP", "TMP"];
 
 /// Original temp-directory paths inherited at process startup (before sanitization), used for
 /// scratch-directory classification.
@@ -80,7 +84,7 @@ pub(crate) fn inherited() -> &'static [PathBuf] {
 /// Whether `name` marks an inherited parent agent/host session that warrants resetting temp env.
 fn is_agent_session_trigger(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    upper.starts_with("ANTIGRAVITY_")
+    (upper.starts_with("ANTIGRAVITY_") && upper != "ANTIGRAVITY_CLI_HOME")
         || upper.starts_with("HERDR_")
         || upper.starts_with("T3_ACP_MCP_")
         || (upper.starts_with("T3CODE_") && upper != "T3CODE_HOME")
@@ -90,12 +94,12 @@ fn is_agent_session_trigger(name: &str) -> bool {
 /// Whether `name` is a parent-session variable stripped at startup and from background children.
 ///
 /// Preserves user configuration, gateway, and credential variables such as `T3CODE_HOME`,
-/// `AGENTNAVE_DATA_DIR`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
-/// `CODEBUDDY_CONFIG_DIR`, `ZCODE_DATA_BASE_DIR`, `CLAUDE_CODE_USE_BEDROCK`, and
-/// `CLAUDE_CODE_USE_VERTEX`.
+/// `ANTIGRAVITY_CLI_HOME`, `AGENTNAVE_DATA_DIR`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
+/// `PI_CODING_AGENT_DIR`, `CODEBUDDY_CONFIG_DIR`, `ZCODE_DATA_BASE_DIR`,
+/// `CLAUDE_CODE_USE_BEDROCK`, and `CLAUDE_CODE_USE_VERTEX`.
 pub(crate) fn is_startup_parent_session(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    is_agent_session_trigger(&upper) || SHELL_SESSION_EXACT.contains(&upper.as_str())
+    is_agent_session_trigger(&upper) || STRIP_ONLY_EXACT.contains(&upper.as_str())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -152,9 +156,41 @@ pub(crate) fn sanitize_startup_env() {
     unsafe {
         if plan.reset_temp {
             reset_process_temp_env();
+        } else {
+            repair_invalid_temp_env_vars();
         }
         for name in plan.remove_vars {
             std::env::remove_var(name);
+        }
+    }
+}
+
+/// Repair any secondary temp-directory variables (`TEMP`/`TMP` on Unix, `TMPDIR` on Windows) that
+/// point to non-existent directories even when the primary temp directory is valid.
+///
+/// # Safety
+/// Caller must ensure no other thread is concurrently reading or mutating the process environment.
+unsafe fn repair_invalid_temp_env_vars() {
+    for key in TEMP_ENV_KEYS {
+        let Some(value) = std::env::var_os(key) else {
+            continue;
+        };
+        if !value.is_empty() && Path::new(&value).is_dir() {
+            continue;
+        }
+        #[cfg(unix)]
+        // SAFETY: forwarded from caller's single-threaded startup guarantee.
+        unsafe {
+            std::env::remove_var(key);
+        }
+        #[cfg(windows)]
+        // SAFETY: forwarded from caller's single-threaded startup guarantee.
+        unsafe {
+            if key.eq_ignore_ascii_case("TMPDIR") {
+                std::env::remove_var(key);
+            } else if let Some(dir) = windows_persistent_temp_dir() {
+                std::env::set_var(key, dir);
+            }
         }
     }
 }
@@ -168,12 +204,20 @@ unsafe fn reset_process_temp_env() {
     {
         let dir = darwin_user_temp_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
         // SAFETY: forwarded from caller's single-threaded startup guarantee.
-        unsafe { std::env::set_var("TMPDIR", dir) };
+        unsafe {
+            std::env::set_var("TMPDIR", dir);
+            std::env::remove_var("TEMP");
+            std::env::remove_var("TMP");
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         // SAFETY: forwarded from caller's single-threaded startup guarantee.
-        unsafe { std::env::remove_var("TMPDIR") };
+        unsafe {
+            std::env::remove_var("TMPDIR");
+            std::env::remove_var("TEMP");
+            std::env::remove_var("TMP");
+        }
         if !std::env::temp_dir().is_dir() {
             let dir = xdg_runtime_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
             // SAFETY: forwarded from caller's single-threaded startup guarantee.
@@ -182,6 +226,8 @@ unsafe fn reset_process_temp_env() {
     }
     #[cfg(windows)]
     {
+        // SAFETY: forwarded from caller's single-threaded startup guarantee.
+        unsafe { std::env::remove_var("TMPDIR") };
         if let Some(dir) = windows_persistent_temp_dir() {
             // SAFETY: forwarded from caller's single-threaded startup guarantee.
             unsafe {
@@ -335,9 +381,16 @@ pub(crate) fn strip_child_env(cmd: &mut Command) {
 }
 
 fn is_temp_env_key(name: &str) -> bool {
-    TEMP_ENV_KEYS
-        .iter()
-        .any(|key| name.eq_ignore_ascii_case(key))
+    #[cfg(windows)]
+    {
+        TEMP_ENV_KEYS
+            .iter()
+            .any(|key| name.eq_ignore_ascii_case(key))
+    }
+    #[cfg(not(windows))]
+    {
+        TEMP_ENV_KEYS.contains(&name)
+    }
 }
 
 /// Filter parent-session variables out of an explicit environment map and replace any temp env var

@@ -75,6 +75,7 @@ from agentnave.claude_tui.turn import (
     transcript_event,
     unauthenticated,
 )
+from agentnave.temp_dir import usable_temp_dir
 
 # One import path for the adapter and tests.
 __all__ = [
@@ -342,9 +343,10 @@ def run_attempt(
 ) -> None:
     terminal: Terminal | None = None
     turn.mode_blocked = False
-    directory = Path(
-        tempfile.mkdtemp(prefix="agentnave-claude-", dir=os.environ.get("AGENTNAVE_CLAUDE_TMP"))
-    )
+    base_dir = os.environ.get("AGENTNAVE_CLAUDE_TMP") or None
+    if not base_dir or not Path(base_dir).is_dir():
+        base_dir = str(usable_temp_dir())
+    directory = Path(tempfile.mkdtemp(prefix="agentnave-claude-", dir=base_dir))
     try:
         args = [*args, "--settings", str(write_settings(directory, args, check_mode))]
         if sys.platform == "win32":

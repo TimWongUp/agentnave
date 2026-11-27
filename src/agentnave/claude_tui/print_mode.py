@@ -18,6 +18,7 @@ from agentnave.claude_tui.hooks import (
     with_mode,
 )
 from agentnave.claude_tui.turn import Transcript, drop_empty_session, object_dict
+from agentnave.temp_dir import usable_temp_dir
 from agentnave.windows_supervisor import popen_args
 
 
@@ -33,7 +34,7 @@ def print_attempt(
     """Streams one -p run through, holding back its result line. Returns the exit status,
     the result, and the permission mode with whether the mode check held the prompt."""
     result: dict[str, object] | None = None
-    with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="agentnave-claude-", dir=str(usable_temp_dir())) as tmp:
         directory = Path(tmp)
         settings = directory / "settings.json"
         settings.write_text(json.dumps({"hooks": mode_hook(directory)}), encoding="utf-8")

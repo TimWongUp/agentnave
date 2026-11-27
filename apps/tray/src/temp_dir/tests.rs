@@ -27,14 +27,17 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
     let valid = tempfile::tempdir().unwrap();
     let missing = valid.path().join("gone");
 
-    // Regular terminal vars (TERM_PROGRAM, PWD, OLDPWD) are stripped but do NOT reset a valid TMPDIR.
+    // Regular terminal vars and persistent tokens (CLAUDE_CODE_OAUTH_TOKEN) are stripped
+    // but do NOT reset a valid TMPDIR; user config vars like ANTIGRAVITY_CLI_HOME stay intact.
     let terminal_plan = plan_startup_env(
         [
             "TERM_PROGRAM",
             "TERM_PROGRAM_VERSION",
             "PWD",
             "OLDPWD",
+            "CLAUDE_CODE_OAUTH_TOKEN",
             "T3CODE_HOME",
+            "ANTIGRAVITY_CLI_HOME",
             "AGENTNAVE_DATA_DIR",
             "CODEX_HOME",
             "CLAUDE_CONFIG_DIR",
@@ -57,6 +60,7 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
             OsString::from("TERM_PROGRAM_VERSION"),
             OsString::from("PWD"),
             OsString::from("OLDPWD"),
+            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
         ]
     );
 
@@ -70,7 +74,6 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
         "CLAUDECODE",
         "CLAUDE_CODE_SESSION_ID",
         "CLAUDE_CODE_SSE_PORT",
-        "CLAUDE_CODE_OAUTH_TOKEN",
         "CODEX_THREAD_ID",
         "ANTIGRAVITY_CONVERSATION_ID",
         "HERDR_PANE_ID",
@@ -84,6 +87,7 @@ fn startup_plan_triggers_temp_reset_only_for_agent_sessions_or_missing_temp() {
             [
                 OsString::from(trigger),
                 OsString::from("T3CODE_HOME"),
+                OsString::from("ANTIGRAVITY_CLI_HOME"),
                 OsString::from("AGENTNAVE_DATA_DIR"),
                 OsString::from("CLAUDE_CODE_USE_BEDROCK"),
             ],
@@ -99,6 +103,8 @@ fn startup_parent_session_preserves_user_config_and_gateway_vars() {
     for preserved in [
         "T3CODE_HOME",
         "t3code_home",
+        "ANTIGRAVITY_CLI_HOME",
+        "antigravity_cli_home",
         "AGENTNAVE_DATA_DIR",
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
@@ -179,26 +185,51 @@ fn sanitize_env_map_strips_parent_session_and_repairs_broken_temp() {
     let valid = tempfile::tempdir().unwrap();
     let fallback = tempfile::tempdir().unwrap();
     let missing = valid.path().join("vanished");
-    let temp_key = if cfg!(windows) { "TEMP" } else { "TMPDIR" };
-
     let mut env = BTreeMap::new();
-    env.insert(temp_key.into(), missing.display().to_string());
+    env.insert("TMPDIR".into(), missing.display().to_string());
+    env.insert("TEMP".into(), missing.display().to_string());
+    env.insert("TMP".into(), valid.path().display().to_string());
+    env.insert("tmpdir".into(), "not-a-temp-dir".into());
     env.insert("CLAUDECODE".into(), "1".into());
     env.insert("T3_ACP_MCP_NODE".into(), "/node".into());
     env.insert("T3CODE_HOME".into(), "/keep/t3".into());
+    env.insert("ANTIGRAVITY_CLI_HOME".into(), "/keep/agy".into());
     env.insert("CLAUDE_CODE_USE_BEDROCK".into(), "1".into());
     env.insert("AGENTNAVE_DATA_DIR".into(), "/keep/data".into());
 
     let clean = sanitize_env_map_with(&env, || fallback.path().to_path_buf());
+    let expected = fallback.path().to_string_lossy();
     assert_eq!(
-        clean.get(temp_key).map(String::as_str),
-        Some(fallback.path().to_string_lossy().as_ref())
+        clean.get("TMPDIR").map(String::as_str),
+        Some(expected.as_ref())
+    );
+    assert_eq!(
+        clean.get("TEMP").map(String::as_str),
+        Some(expected.as_ref())
+    );
+    assert_eq!(
+        clean.get("TMP").map(String::as_str),
+        Some(valid.path().to_string_lossy().as_ref())
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        clean.get("tmpdir").map(String::as_str),
+        Some("not-a-temp-dir")
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        clean.get("tmpdir").map(String::as_str),
+        Some(expected.as_ref())
     );
     assert!(!clean.contains_key("CLAUDECODE"));
     assert!(!clean.contains_key("T3_ACP_MCP_NODE"));
     assert_eq!(
         clean.get("T3CODE_HOME").map(String::as_str),
         Some("/keep/t3")
+    );
+    assert_eq!(
+        clean.get("ANTIGRAVITY_CLI_HOME").map(String::as_str),
+        Some("/keep/agy")
     );
     assert_eq!(
         clean.get("CLAUDE_CODE_USE_BEDROCK").map(String::as_str),

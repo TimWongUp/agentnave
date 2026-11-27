@@ -427,45 +427,15 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 26] = [
-    "CLAUDECODE",
-    "CLAUDE_PID",
-    "CLAUDE_EFFORT",
-    "CLAUDE_AGENT_SDK_VERSION",
-    "CLAUDE_PROJECT_DIR",
-    "CODEX_THREAD_ID",
-    "CODEX_SANDBOX",
-    "CODEX_SANDBOX_NETWORK_DISABLED",
-    "GROK_SESSION_ID",
-    "GROK_SANDBOX",
-    "ELECTRON_RUN_AS_NODE",
-    "AGENTNAVE_HOST",
-    "AGENTNAVE_HOST_APP",
-    "AGENTNAVE_HOST_SESSION_ID",
-    "AGENTNAVE_EXCLUDED_PROVIDERS",
-    "AGENTNAVE_MANAGER_SESSION",
-    "AGENTNAVE_MANAGER_STARTED_AT",
-    "AGENTNAVE_DISPATCHED",
-    "AGENTNAVE_DERIVED_SESSION",
-    "AGENTNAVE_HANDOVER_PROMPT",
-    // WorkBuddy and CodeBuddy point these at their own live listener.
-    "SERVER__PORT",
-    "SERVER__HOST",
-    "PWD",
-    "OLDPWD",
-    "TERM_PROGRAM",
-    "TERM_PROGRAM_VERSION",
-];
-
+///
+/// Shares the canonical startup parent-session list in [`crate::temp_dir`] and additionally strips
+/// `CLAUDE_CODE_*` and `T3CODE_HOME` for isolated interactive terminals.
 pub(crate) fn parent_session(name: &str) -> bool {
     // Windows environment names are case-insensitive.
-    let name = name.to_ascii_uppercase();
-    name.starts_with("CLAUDE_CODE_")
-        || name.starts_with("ANTIGRAVITY_")
-        || name.starts_with("HERDR_")
-        || name.starts_with("T3_ACP_MCP_")
-        || name.starts_with("T3CODE_")
-        || PARENT_SESSION.contains(&name.as_str())
+    let upper = name.to_ascii_uppercase();
+    crate::temp_dir::is_startup_parent_session(name)
+        || upper.starts_with("CLAUDE_CODE_")
+        || upper == "T3CODE_HOME"
 }
 
 pub(super) fn strip_parent_session(

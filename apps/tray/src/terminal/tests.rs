@@ -465,6 +465,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "CODEBUDDY_CONFIG_DIR",
+        "ANTIGRAVITY_CLI_HOME",
         "HERDR",
         "MY_HERDR_FLAG",
         "T3CODE",
