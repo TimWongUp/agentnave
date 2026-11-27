@@ -28,6 +28,7 @@ from agentnave.agy_tui.screen import (
 )
 from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
+from agentnave.temp_dir import usable_temp_dir
 
 STARTUP_TIMEOUT = 60.0
 # Give the post-login experiment refresh time to finish before sending the task.
@@ -556,7 +557,9 @@ def run_main(executable: str, conversation_id: str | None, extra: list[str], pro
             raise ValueError(
                 "Antigravity interactive mode requires agy 1.5.10 or later; update agy and retry"
             )
-        with tempfile.TemporaryDirectory(prefix="agentnave-agy-") as tmp:
+        with tempfile.TemporaryDirectory(
+            prefix="agentnave-agy-", dir=str(usable_temp_dir())
+        ) as tmp:
             logfile = Path(tmp) / "agy.log"
             args = [*extra, "--settings", settings(os.getcwd()), "--log-file", str(logfile)]
             if conversation_id is not None:

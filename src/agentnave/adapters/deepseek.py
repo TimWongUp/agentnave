@@ -30,6 +30,7 @@ from agentnave.models import (
     ProviderActivity,
     ProviderOption,
 )
+from agentnave.temp_dir import sanitize_temp_env, usable_temp_dir
 from agentnave.windows_supervisor import popen_args
 
 _DESKTOP_DSH_PATHS = (
@@ -108,11 +109,16 @@ def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, s
 
     dsh replaces that entry's config as a whole, so a model override must restate a route.
     """
+    env = os.environ.copy()
+    sanitize_temp_env(env)
     try:
         args, application = popen_args([executable, "--profile", "headless", "--dump-config"])
         result = subprocess.run(
             args,
             executable=application,
+            # The headless profile ignores the project, so any existing directory serves.
+            cwd=usable_temp_dir(),
+            env=env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             # dsh writes UTF-8; `text=True` alone would decode with the Windows locale (GBK on a
@@ -299,7 +305,9 @@ class DeepSeekAdapter(AdapterHooks):
         ]
         cleanup: tuple[Path, ...] = ()
         if rows:
-            fd, raw_path = tempfile.mkstemp(prefix="agentnave-dsh-", suffix=".yml")
+            fd, raw_path = tempfile.mkstemp(
+                prefix="agentnave-dsh-", suffix=".yml", dir=usable_temp_dir()
+            )
             path = Path(raw_path)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as patch:

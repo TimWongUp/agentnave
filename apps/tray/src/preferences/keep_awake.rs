@@ -75,15 +75,15 @@ impl Inhibitor {
         }
         if enabled && self.child.is_none() {
             // -i blocks idle system sleep, never display sleep. -w also releases on parent death.
-            self.child = Some(
-                std::process::Command::new("/usr/bin/caffeinate")
-                    .args(["-i", "-w", &std::process::id().to_string()])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .map_err(|error| error.to_string())?,
-            );
+            let mut command = std::process::Command::new("/usr/bin/caffeinate");
+            command
+                .args(["-i", "-w", &std::process::id().to_string()])
+                .current_dir(crate::temp_dir::usable())
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            crate::temp_dir::apply_to_command(&mut command);
+            self.child = Some(command.spawn().map_err(|error| error.to_string())?);
         } else if !enabled && let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();

@@ -84,7 +84,8 @@ impl Env {
     }
 
     pub(super) fn detect() -> Self {
-        let mut temp = vec![std::env::temp_dir()];
+        let mut temp = vec![crate::temp_dir::usable(), std::env::temp_dir()];
+        temp.extend(crate::temp_dir::inherited().iter().cloned());
         temp.extend(["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"].map(PathBuf::from));
         for (name, tail) in [("LOCALAPPDATA", "Temp"), ("SystemRoot", "Temp")] {
             temp.extend(std::env::var_os(name).map(|dir| PathBuf::from(dir).join(tail)));

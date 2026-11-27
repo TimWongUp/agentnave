@@ -133,7 +133,8 @@ done
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .current_dir(std::env::temp_dir());
+        .current_dir(crate::temp_dir::usable());
+    crate::temp_dir::apply_to_command(&mut command);
     command
 }
 
@@ -176,14 +177,17 @@ function Remove-AgentNaveTree([string]$path) {
         .map(PathBuf::from)
         .ok_or("无法定位 Windows 系统目录")?
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    Command::new(powershell)
+    let mut command = Command::new(powershell);
+    command
         .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
         .arg(base64::engine::general_purpose::STANDARD.encode(bytes))
         .creation_flags(0x0000_0008) // DETACHED_PROCESS: survive the App's exit.
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .current_dir(std::env::temp_dir())
+        .current_dir(crate::temp_dir::usable());
+    crate::temp_dir::apply_to_command(&mut command);
+    command
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("无法启动卸载清理：{e}"))

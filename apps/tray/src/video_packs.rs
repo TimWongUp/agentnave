@@ -61,7 +61,7 @@ fn is_installed(dir: &Path) -> bool {
 
 fn preview_root() -> PathBuf {
     dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
+        .unwrap_or_else(crate::temp_dir::usable)
         .join("com.agentnave.preview")
 }
 

@@ -53,8 +53,9 @@ pub(crate) fn login_exec(shell: &Path) -> Option<&'static str> {
 fn configure(mut command: Command, executable: &Path, args: &[&str]) -> Command {
     command
         .args(args)
-        .current_dir(std::env::temp_dir())
+        .current_dir(crate::temp_dir::usable())
         .stdout(Stdio::piped());
+    crate::temp_dir::strip_child_env(&mut command);
     if let Some(path) = search_path(executable) {
         command.env("PATH", path);
     }

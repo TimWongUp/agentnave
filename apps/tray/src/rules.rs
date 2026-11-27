@@ -615,9 +615,11 @@ pub fn open(apps: &[App], home: &Path, path: &str) -> Result<Value, String> {
     let mut command = std::process::Command::new("xdg-open");
     command
         .arg(&path)
+        .current_dir(crate::temp_dir::usable())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    crate::temp_dir::apply_to_command(&mut command);
     let failed = || format!("无法打开 {}", path.display());
     // `open` returns at once and says whether it worked; the others stay until the editor closes.
     #[cfg(target_os = "macos")]

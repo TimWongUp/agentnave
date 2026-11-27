@@ -9,6 +9,8 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
+import tempfile
 import time
 from contextlib import AbstractContextManager, closing
 from dataclasses import replace
@@ -2290,3 +2292,28 @@ def test_collapsed_rebuild_rollback_and_recovery_keep_managed_branch(tmp_path: P
     assert deleted.status == "deleted"
     assert dirs.store.get(created.id) is None
     dirs.close()
+
+
+def test_git_heals_a_temp_dir_the_host_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    hooks = gone / "hooks"
+    hooks.mkdir()
+    monkeypatch.setattr(isolated_repo, "_empty_hooks_dir", hooks)
+    monkeypatch.setattr(tempfile, "tempdir", str(gone))
+    monkeypatch.setenv("TMPDIR", str(gone))
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    shutil.rmtree(gone)
+
+    rebuilt = isolated_repo.empty_hooks_dir()
+    assert rebuilt.is_dir() and not rebuilt.is_relative_to(gone)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run_git(["init", "-q"], cwd=repo)
+    # A native interpreter, not MSYS2 `env`, so Git for Windows hands TEMP over in Windows form.
+    dump = f'!"{Path(sys.executable).as_posix()}" -c "import json,os; print(json.dumps(dict(os.environ)))"'
+    env = json.loads(run_git(["e"], cwd=repo, config_overrides=[f"alias.e={dump}"]).stdout)
+    assert "TMPDIR" not in env or Path(env["TMPDIR"]).is_dir()
+    assert Path(env["TEMP"]).samefile(tmp_path)

@@ -177,7 +177,7 @@ impl Drop for Client {
 
 pub(super) fn socket_path(terminal_id: u64) -> PathBuf {
     let name = format!("an-cx-{}-{terminal_id}.sock", std::process::id());
-    let candidate = std::env::temp_dir().join(&name);
+    let candidate = crate::temp_dir::usable().join(&name);
     // sun_path limit is 104 bytes on macOS and 108 on Linux.
     if candidate.as_os_str().len() < 96 {
         candidate

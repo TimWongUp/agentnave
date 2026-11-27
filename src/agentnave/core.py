@@ -57,6 +57,7 @@ from agentnave.progress_stall import (
     progress_stalled_error,
 )
 from agentnave.push_capability import TrayIdentity
+from agentnave.temp_dir import usable_temp_dir
 from agentnave.terminal_execution import TerminalLaunch, TerminalRun, execute_run
 from agentnave.usage_probe import run_usage_query
 from agentnave.warm_pool import (
@@ -1466,7 +1467,7 @@ class InvocationManager:
             if record.cancel_event.is_set():
                 return None
             if prepared.temp_dir_env:
-                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
+                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-", dir=usable_temp_dir())
             supervised = await spawn_process(
                 prepared.argv,
                 prepared.cwd,

@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from agentnave.isolated.store import ID_PATTERN
 from agentnave.store import write_file
+from agentnave.temp_dir import sanitize_temp_env, usable_temp_dir
 
 WORKTREES_DIR_NAME = ".agentnave-worktrees"
 EXCLUDE_RULE = b"/.agentnave-worktrees/"
@@ -153,7 +154,7 @@ def empty_hooks_dir() -> Path:
     global _empty_hooks_dir
     with _hooks_dir_lock:
         if _empty_hooks_dir is None or not _empty_hooks_dir.is_dir():
-            created = Path(tempfile.mkdtemp(prefix="agentnave-empty-hooks-"))
+            created = Path(tempfile.mkdtemp(prefix="agentnave-empty-hooks-", dir=usable_temp_dir()))
             atexit.register(shutil.rmtree, created, ignore_errors=True)
             _empty_hooks_dir = created
         return _empty_hooks_dir
@@ -260,6 +261,7 @@ def run_git(
         env["GIT_NO_LAZY_FETCH"] = "1"
     # Hooks and filters may start their own children; give them a group to kill on timeout.
     runs_repo_code = not disable_hooks or not neutralize_filters
+    sanitize_temp_env(env)
     if extra_env:
         env.update(extra_env)
     try:

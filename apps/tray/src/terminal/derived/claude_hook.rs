@@ -45,7 +45,7 @@ pub(super) fn claude_permission_modes(
 pub(super) fn prepare_claude_hook(arm_mode_fallback: bool) -> Result<tempfile::TempDir, String> {
     let dir = tempfile::Builder::new()
         .prefix("agentnave-claude-hook-")
-        .tempdir()
+        .tempdir_in(crate::temp_dir::usable())
         .map_err(|e| format!("无法创建 Claude hook 目录：{e}"))?;
     if arm_mode_fallback {
         fs::write(dir.path().join("armed"), b"1")

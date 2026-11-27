@@ -7,7 +7,7 @@ use portable_pty::CommandBuilder;
 
 #[cfg(unix)]
 use super::session::Session;
-use super::session::{KEPT, Output, cli_args, command, parent_session};
+use super::session::{KEPT, Output, cli_args, command, parent_session_names};
 #[cfg(unix)]
 use super::{Running, Terminals};
 
@@ -121,6 +121,10 @@ fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
         }
     }
     (text, session.exit())
+}
+
+fn parent_session(name: &str) -> bool {
+    !parent_session_names([(name.into(), "1".into())]).is_empty()
 }
 
 /// Waits for the CLI to exit, reading whatever it still writes.
@@ -452,6 +456,11 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "T3CODE_THREAD_ID",
         "T3CODE_HOME",
         "T3code_Thread_Id",
+        "T3_ACP_MCP_NODE",
+        "T3_ACP_MCP_ENTRYPOINT",
+        "ELECTRON_RUN_AS_NODE",
+        "PWD",
+        "OLDPWD",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");
@@ -460,6 +469,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "CODEBUDDY_CONFIG_DIR",
+        "ANTIGRAVITY_CLI_HOME",
         "HERDR",
         "MY_HERDR_FLAG",
         "T3CODE",
@@ -486,7 +496,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
             "KEEP_ME",
         ]
         .into_iter()
-        .map(std::ffi::OsString::from),
+        .map(|name| (name.into(), "1".into())),
     );
     assert_eq!(cmd.get_env("HERDR_PANE_ID"), None);
     assert_eq!(cmd.get_env("HERDR_SESSION"), None);

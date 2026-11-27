@@ -315,13 +315,15 @@ impl Hosts {
         let program = "explorer.exe";
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let program = "xdg-open";
-        std::process::Command::new(program)
+        let mut command = std::process::Command::new(program);
+        command
             .arg(&path)
+            .current_dir(crate::temp_dir::usable())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|_| "无法打开备份目录")?;
+            .stderr(std::process::Stdio::null());
+        crate::temp_dir::apply_to_command(&mut command);
+        command.spawn().map_err(|_| "无法打开备份目录")?;
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {

@@ -19,6 +19,8 @@ from typing import cast
 
 from agentnave.adapters.base import provider_bin_dirs
 from agentnave.host import NATIVE_SESSION_ENV
+from agentnave.t3_env import t3_injected_env
+from agentnave.temp_dir import sanitize_temp_env, usable_temp_dir
 from agentnave.windows_supervisor import server_identity
 
 
@@ -76,7 +78,9 @@ async def spawn_process(
 WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
 # Outer terminal-pane wrappers (herdr) and T3 Code sessions export bindings that nested CLIs must
 # not inherit (ADR-0114, ADR-0121). The server itself keeps reading T3CODE_HOME from os.environ.
-STRIP_ENV_PREFIXES = ("HERDR_", "T3CODE_")
+STRIP_ENV_PREFIXES = ("HERDR_", "T3CODE_", "T3_ACP_MCP_")
+# Electron hosts set this for their own helpers; an Electron-based CLI would then run as Node.
+ELECTRON_ENV = "ELECTRON_RUN_AS_NODE"
 INHERITED_HOST_ENV = (
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",
@@ -99,6 +103,9 @@ def provider_environment(
     install directories.
     """
     env = dict(os.environ)
+    # Judged on the untouched copy: GEMINI_HOME's origin depends on markers removed with it.
+    for name in t3_injected_env(env):
+        env.pop(name, None)
     # The boss's identity stays with the boss: a provider's own MCP entry, or its own
     # ancestry, names the host its relay serves (ADR-0096).
     for name in INHERITED_HOST_ENV:
@@ -112,9 +119,12 @@ def provider_environment(
     for name in [
         key
         for key in env
-        if (key.upper() if os.name == "nt" else key).startswith(STRIP_ENV_PREFIXES)
+        if (folded := key.upper() if os.name == "nt" else key).startswith(STRIP_ENV_PREFIXES)
+        or folded == ELECTRON_ENV
     ]:
         env.pop(name, None)
+    # A host may have deleted the temp directory it handed down; Node CLIs then fail with ENOENT.
+    sanitize_temp_env(env)
     # A provider may load global MCP entries too; those relays are not boss connections.
     env["AGENTNAVE_DISPATCHED"] = "1"
     if os.name == "nt":
@@ -214,10 +224,14 @@ async def _spawn_windows_process(
     unset_env: tuple[str, ...] = (),
     extra_env: dict[str, str] | None = None,
 ) -> SupervisedProcess:
-    status_fd, status_name = tempfile.mkstemp(prefix="agentnave-", suffix=".json")
+    status_fd, status_name = tempfile.mkstemp(
+        prefix="agentnave-", suffix=".json", dir=usable_temp_dir()
+    )
     os.close(status_fd)
     status_path = Path(status_name)
-    ready_fd, ready_name = tempfile.mkstemp(prefix="agentnave-", suffix=".ready")
+    ready_fd, ready_name = tempfile.mkstemp(
+        prefix="agentnave-", suffix=".ready", dir=usable_temp_dir()
+    )
     os.close(ready_fd)
     ready_path = Path(ready_name)
     ready_path.unlink()

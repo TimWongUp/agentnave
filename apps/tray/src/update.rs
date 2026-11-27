@@ -595,7 +595,8 @@ fn relaunch(app: &AppHandle) {
         app.restart();
     };
     // Should LaunchServices refuse the bundle, start its executable directly, as Tauri does.
-    let spawned = Command::new("/bin/sh")
+    let mut command = Command::new("/bin/sh");
+    command
         .arg("-c")
         .arg(
             r#"pid=$1 bin=$2; shift 2; while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done; /usr/bin/open "$@" && exit; shift 2; exec "$bin" "$@""#,
@@ -606,11 +607,13 @@ fn relaunch(app: &AppHandle) {
         .arg(&bundle)
         .arg("--args")
         .args(env.args_os.iter().skip(1))
+        .current_dir(crate::temp_dir::usable())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .process_group(0)
-        .spawn();
+        .process_group(0);
+    crate::temp_dir::strip_child_env(&mut command);
+    let spawned = command.spawn();
     match spawned {
         Ok(_) => app.exit(0),
         Err(error) => {
@@ -851,6 +854,8 @@ pub fn install_service_now(app: &AppHandle) -> Value {
 
 fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
     let mut command = Command::new(uv);
+    command.current_dir(crate::temp_dir::usable());
+    crate::temp_dir::strip_child_env(&mut command);
     command
         .args(args)
         .envs(&dirs.network)
@@ -920,15 +925,18 @@ pub fn copy_service_command(app: &AppHandle) {
     #[cfg(windows)]
     let program = "clip";
     #[cfg(any(target_os = "macos", windows))]
-    if let Ok(mut child) = std::process::Command::new(program)
-        .stdin(std::process::Stdio::piped())
-        .spawn()
     {
-        use std::io::Write;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(command.as_bytes());
+        let mut cmd = std::process::Command::new(program);
+        cmd.current_dir(crate::temp_dir::usable())
+            .stdin(std::process::Stdio::piped());
+        crate::temp_dir::apply_to_command(&mut cmd);
+        if let Ok(mut child) = cmd.spawn() {
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(command.as_bytes());
+            }
+            let _ = child.wait();
         }
-        let _ = child.wait();
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     let _ = command;

@@ -81,7 +81,10 @@ fn open(root: &Path) -> io::Result<()> {
     let launcher = "explorer";
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let launcher = "xdg-open";
-    Command::new(launcher).arg(root).spawn()?;
+    let mut command = Command::new(launcher);
+    command.arg(root).current_dir(crate::temp_dir::usable());
+    crate::temp_dir::apply_to_command(&mut command);
+    command.spawn()?;
     Ok(())
 }
 

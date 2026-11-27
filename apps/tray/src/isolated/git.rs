@@ -59,7 +59,7 @@ impl GitRunner {
     pub(crate) fn new() -> Result<Self, String> {
         let empty_hooks = tempfile::Builder::new()
             .prefix("agentnave-empty-hooks-")
-            .tempdir()
+            .tempdir_in(crate::temp_dir::usable())
             .map_err(|e| format!("无法创建临时 hooks 目录：{e}"))?;
         Ok(Self { empty_hooks })
     }
@@ -150,6 +150,8 @@ impl GitRunner {
         filters_from: &[&Path],
     ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
+        cmd.current_dir(crate::temp_dir::usable());
+        crate::temp_dir::strip_child_env(&mut cmd);
         cmd.arg("--no-pager").arg("-C").arg(cwd);
         for item in [
             "core.fsmonitor=false",

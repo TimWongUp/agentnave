@@ -27,6 +27,7 @@ from agentnave.adapters.base import (
 from agentnave.adapters.usage_reset import antigravity_reset
 from agentnave.background_tasks import BackgroundTasksState, parse_background_tasks_event
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.t3_env import t3_injected_env
 
 _LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
 _LABEL_TEXT = re.compile(r"([A-Za-z0-9.]+(?: [A-Za-z0-9.]+)*)(?: \(([A-Za-z0-9 ]+)\))?")
@@ -42,19 +43,12 @@ _HOST_SESSION_ENV = (
     "ANTIGRAVITY_PROJECT_ID",
     "ANTIGRAVITY_SOURCE_METADATA",
     "ANTIGRAVITY_TRAJECTORY_ID",
-    "AGY_ACP_FORCE_FILE_STORAGE",
 )
 
 
 def _antigravity_unset_env() -> tuple[str, ...]:
-    """Strip parent Antigravity host session vars, plus T3 Code's isolated GEMINI_HOME."""
-    app_data = os.environ.get("ANTIGRAVITY_APP_DATA_DIR", "").strip()
-    in_t3_acp = Path(app_data).name == "antigravity-acp" or bool(
-        os.environ.get("AGY_ACP_FORCE_FILE_STORAGE", "").strip()
-    )
-    if in_t3_acp:
-        return (*_HOST_SESSION_ENV, "GEMINI_HOME")
-    return _HOST_SESSION_ENV
+    """Strip parent Antigravity host session vars, plus what T3 Code's ACP profile injected."""
+    return (*_HOST_SESSION_ENV, *t3_injected_env(os.environ))
 
 
 def session_model(conversation_id: str | None, *, since: datetime) -> str | None:

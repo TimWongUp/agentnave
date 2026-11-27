@@ -27,6 +27,10 @@ async def test_provider_does_not_inherit_host_listener(
         "HERDR_SESSION": "sess-9",
         "T3CODE_THREAD_ID": "thread-1",
         "T3CODE_HOME": str(tmp_path / "t3"),
+        "T3_ACP_MCP_PORT": "4100",
+        "ELECTRON_RUN_AS_NODE": "1",
+        "TMPDIR": str(tmp_path / "deleted"),
+        "TEMP": str(tmp_path),
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
     }
     for name, value in inherited.items():
@@ -50,6 +54,11 @@ async def test_provider_does_not_inherit_host_listener(
         "HERDR_SESSION": None,
         "T3CODE_THREAD_ID": None,
         "T3CODE_HOME": None,
+        "T3_ACP_MCP_PORT": None,
+        "ELECTRON_RUN_AS_NODE": None,
+        # Windows replaces a missing temp directory, POSIX lets the child pick its default.
+        "TMPDIR": str(processes.usable_temp_dir()) if os.name == "nt" else None,
+        "TEMP": str(tmp_path),
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
         # POSIX names the supervisor's own session, which the provider tree shares.
         "AGENTNAVE_DISPATCHED": "1" if os.name == "nt" else str(supervised.process.pid),

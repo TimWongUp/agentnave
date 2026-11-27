@@ -295,7 +295,7 @@ pub(super) fn launch_tui(
         TuiKind::Antigravity => {
             let dir = tempfile::Builder::new()
                 .prefix("agentnave-agy-")
-                .tempdir()
+                .tempdir_in(crate::temp_dir::usable())
                 .map_err(|e| format!("无法创建 agy 日志目录：{e}"))?;
             let log_path = dir.path().join("agy.log");
             let args = build_agy_args(cfg, resume, cwd, &log_path);

@@ -26,7 +26,7 @@ pub fn dir() -> PathBuf {
         "io.github.timwongup.agentnave"
     };
     dirs::config_dir()
-        .unwrap_or_else(std::env::temp_dir)
+        .unwrap_or_else(crate::temp_dir::usable)
         .join(id)
 }
 

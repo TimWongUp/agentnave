@@ -1011,3 +1011,38 @@ exit 1"#,
     let isolated_case = git_pr.refresh(mk_input("hover", true, Some("wt-1234567890ab")));
     assert_eq!(isolated_case["workspaces"]["s-ws"]["working"], false);
 }
+
+#[cfg(unix)]
+#[test]
+fn gh_spawn_not_found_with_existing_binary_is_not_misclassified_as_not_installed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::gh::{GhError, GhStatus};
+
+    let tmp = tempfile::tempdir().unwrap();
+    // An existing script with a non-existent interpreter causes execve to return ENOENT even though
+    // `program.is_file()` is true.
+    let broken_gh = tmp.path().join("broken-gh");
+    fs::write(&broken_gh, "#!/nonexistent/agentnave-missing-interp\n").unwrap();
+    fs::set_permissions(&broken_gh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let client = GhClient::with_program(broken_gh);
+    assert_eq!(client.check_status(), GhStatus::Unknown);
+    assert!(matches!(
+        client.view_pr_number("acme/demo", 1),
+        Err(GhError::Other(_))
+    ));
+
+    // A working gh that reports auth failure still classifies as NotAuthenticated.
+    let unauth_gh = write_fake_gh(tmp.path(), "echo 'not logged into any hosts' >&2\nexit 1");
+    assert_eq!(
+        GhClient::with_program(unauth_gh).check_status(),
+        GhStatus::NotAuthenticated
+    );
+
+    // A missing gh binary still classifies as NotInstalled.
+    assert_eq!(
+        GhClient::with_program(tmp.path().join("no-such-gh")).check_status(),
+        GhStatus::NotInstalled
+    );
+}
