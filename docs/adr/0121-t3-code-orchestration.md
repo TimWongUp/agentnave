@@ -8,13 +8,19 @@
 - 2026-11-25 自身修订：T3 页有自己的一组 boss 勾选，只列 T3 与 AgentNave 都支持的 CLI（第 2、5、8 节）。「T3 跟随该 boss 的编排档位」改为：档位决定写什么，勾选决定谁在 T3 里按这套走；T3 里认得出的四家照第 5 节写，认不出的 Grok、Pi 写另一节，派活按 T3 自己的规则；勾了但通用页关闭的 boss 写 T3 专用块。第一版「T3 范围跟着通用页勾选」作废。
 - 2026-11-25 自身修订：取消首次预填（第 8 节），首次打开只有空白的通用探索、通用执行和生图工位；添加的备选不自动选模型。
 - 2026-11-25 自身修订：修正勾选的三处。没存过勾选时服务端也按 CLI 推导，同一 CLI 有一行不是关闭就算勾选，其余关闭的行在 T3 里按分工协作（第 2 节）；T3 专用块的限定句点名勾选的 CLI，同文件没勾选的读者不适用其中的授权（第 5 节）；关闭档也显示「通用 / T3 Code」切换和 T3 区块，只开会档不显示（第 8 节）。取舍里「不能普通编排关着、只开 T3」作废。
+- 2026-11-27 自身修订：补齐 T3 实测暴露的五处边界与协作体验（第 1、2、4、5 节）：
+  1. T3 内置终端（`TERM_PROGRAM=t3code`）无论是否携带 `T3CODE_THREAD_ID`，一律按普通连接处理（第 1 节）。
+  2. 为消除同一宿主共享 MCP 发现缓存时的主／子互相覆写，所有已识别 T3 宿主的主／子连接发布逐字节一致的角色中立 MCP 说明与工具列表投影（包括子线程按同一份 `t3-seats.json` 投影，未启用 T3 编排时主／子同样一致）；子线程仍由调用入口硬拒绝选位、派发、开会与交接，并在 `recommend_seat` 的简报附言中附子线程身份声明（第 2、4、5 节）。原「主／子线程各自用专用 MCP 说明」与「子线程不碰 `t3-seats.json`」作废。
+  3. T3「先查后改」支持在 `access="read"` 时声明后续可能转写（或显式传入非生图可写工位），从非生图可写工位中按本步调查难度与将来改动专业选位（同时补齐非 T3 模式分阶段调查排除生图工位的边界），首轮返回带限定条件的只读附言，默认先开独立 worktree，确认后通过 `t3_thread_send(mode="queue")` 原地续接同一子线程（第 4、5 节）。
+  4. Antigravity 的 `recommend_seat` 回执由「不试 MCP 调用」放宽为「工具已列出时直调，缺失时经 `acp-mcp-call` 标准输入（`-`）桥接」，按当前操作系统只输出对应写法（第 4 节）。
+  5. 明确不主动调用 `t3_worktree_handoff`（主线程留原地，只给写子任务开 `isolation="worktree"`，已在目标任务 worktree 且单人写时用 `shared`）；写任务 `recommend_seat` 回执附中立收尾指引（按 `t3_thread_read` 核对路径与分支，合入后按用户规则或 T3 清理策略决定清理或保留，清理前须确认已合入且目录干净、不强制删除，未合入或有未提交改动一律保留并报路径，第 4、5 节）。
 - 修订（仅在 T3 主线程且用户开启 T3 编排时）：
   - [ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)：T3 编排的对象由 T3 页单独勾选，写什么跟该 boss 的编排档位；开启时勾选的 boss 在分工协作、决策模型、自定义三档的规则块多一节 T3 派法，通用页关闭的 boss 在开启 T3 并勾选时也写块，内容是 T3 专用块（第 2、5 节）。
   - [ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0089](0089-seat-fallback-order.md)、[ADR-0093](0093-decision-seat-random-candidates.md)：T3 主线程用单独的工位目录；选工位时当场定好候选顺序，由 boss 交给 T3 执行（第 3、4 节）。
   - [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md)、[ADR-0108](0108-multi-account-isolation.md)：T3 主线程不做宿主同类处理，账号由 T3 实例表示（第 3 节）。
   - [ADR-0030](0030-optional-review-gate-skill.md)、[ADR-0038](0038-role-applies-app-seat.md)：T3 主线程的评审工位读 T3 工位文件（第 3 节）。
   - [ADR-0114](0114-tui-runtime-like-a-user.md)：T3 主线程可用后台命令等会议和派发；派出的进程剥离 T3 标识（第 1、6 节）。
-  - [ADR-0117](0117-private-dispatch-without-skill.md)：T3 主线程与子线程用各自的 MCP 说明（第 5 节）。
+  - [ADR-0117](0117-private-dispatch-without-skill.md)：T3 主线程与子线程共用同一段角色中立的 T3 MCP 说明与工具定义，子线程限制在调用入口强制执行（第 2、5 节）。
 - 不改变：[ADR-0031](0031-prompt-only-orchestration.md) 的单向编排；[ADR-0032](0032-cli-permission-tiers.md) 不追加权限参数；[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) 的 Skill 安装；[ADR-0099](0099-handover-links-workspaces.md) 的转交。
 
 ## 背景
@@ -43,12 +49,13 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
 ## 决定
 
 1. **识别 T3**。每个聊天有自己的服务进程，启动时判断一次：
+   - 若 `TERM_PROGRAM` 忽略大小写为 `t3code`（T3 内置终端），一律返回普通连接，不按 T3 主／子线程处理。
    - Claude：宿主是 Claude，`CLAUDE_CODE_ENTRYPOINT=t3-code` 且 `T3CODE_THREAD_ID` 非空，并且祖先进程里没有第二个 `claude`（嵌套 `claude -p` 会继承这两个变量）。Windows 不查祖先，接受罕见误判。
    - Codex、Antigravity、CodeBuddy：宿主是 Codex、Antigravity 或 CodeBuddy 且 `T3CODE_THREAD_ID` 非空，不查祖先进程。Grok 不识别：它的进程（含它拉起的服务）都没有 `T3CODE_THREAD_ID`，分不清主线程和子线程。
    - 线程 ID 以 `thread:delegated-task:` 开头是 T3 派出的子线程（子线程里嵌套的 `claude` 也是），其余是主线程。
    - 服务启动的 Provider 进程与托盘终端剥离 `T3CODE_` 开头的变量，避免误判。`T3CODE_HOME` 由服务自己读取后再剥离。
    - 其他宿主不识别。
-2. **T3 的写法跟随编排档位，对象单独勾选**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、该 boss 没勾选、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，除第 6 节的后台等外一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程不受开关影响，总是只给子线程说明。
+2. **T3 的写法跟随编排档位，对象单独勾选**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、该 boss 没勾选、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，除第 6 节的后台等与同宿主 MCP 发现一致性外一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程在运行调用入口始终受第 4 节硬拒绝约束（不受开关影响），但其对外发布的 MCP 说明与工具定义按同一宿主的当前配置与主线程保持逐字节一致，防止共享 MCP 发现缓存的宿主（如 Antigravity）在主／子线程间互相覆写。
    - **勾选**：数据根 `t3-seats.json` 的可选字段 `bosses`，存 CLI 标识数组；没有这个字段时一直按通用页推导：模式不是关闭、且在支持列表里的 boss（同一 CLI 的多个账号只要有一个不是关闭就算勾选，服务端按同一规则判断，其余关闭的行在 T3 里按分工协作）。用户在 T3 页改过并保存后，只按存的写，两边各管各的，之后新接入的 boss 不自动勾选。
    - **支持列表**是静态表，T3 与 AgentNave 都支持的 CLI：`claude`（T3 的 `claudeAgent`）、`codex`、`antigravity`、`codebuddy`（`acpRegistry_codebuddy_code` 实例）、`grok`、`pi`；T3 的 cursor、opencode 等 AgentNave 没有对应 boss，Trae、WorkBuddy 等 T3 不支持的不出现在 T3 页，也不写任何 T3 内容。不用 T3 实际检测到的实例推导：缓存缺失或还没刷新时勾选会消失，已保存的选择也会跟着丢；T3 页本来就只在检测到 T3 时显示。
    - **识别与不识别**：第 1 节认得出的 `claude`、`codex`、`antigravity`、`codebuddy` 照第 5 节写；认不出的 `grok`、`pi` 写第 5 节的另一节，服务端不改变它们的行为。
@@ -60,19 +67,21 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    - 不做宿主同类处理：工位的账号、模型和推理档是用户指定的设置，T3 的说明对这种情况用 `delegate_task`，选到 boss 自己的 CLI 或账号也一样。
    - 生图工位可按画风设多个，各有 1–4 个候选，存的仍是账号、对话模型和推理档；出图由该 CLI 用自带的生图工具或生图子代理完成。没有配好的生图工位时直接告诉用户，不拿其他可写工位顶替。
 4. **选工位与执行分开**。
-   - T3 主线程里 `recommend_seat` 接受一项或多项（各带摘要、读写，可指定工位或评审角色），当场返回每项排好序的 T3 候选与请求号，不启动任何东西。标准专业的工位也可用固定工位的名字指定（如 `worker-easy`）。分工协作和自定义档必须指定工位，没指定就报错并列出可选工位，不问决策模型、不需要密钥；决策模型档没指定才问决策模型。指定工位或评审角色时不问决策模型；同档候选随机打开时，同一批里优先避开已排首位的「实例＋模型」；关闭时按保存的顺位。生图工位始终按保存的顺位，也不占同批避重的名额；选中时回执附一段交给子线程的说明：可用自带的生图子代理，不用代码或别的办法顶替，成品存到简报给的路径。
+   - T3 主线程里 `recommend_seat` 接受一项或多项（各带摘要、读写，可指定工位或评审角色，也可在 `access="read"` 时以 `may_implement=true` 声明该排查后续可能在同一子线程转入实现），当场返回每项排好序的 T3 候选与请求号，不启动任何东西。标准专业的工位也可用固定工位的名字指定（如 `worker-easy`）。分工协作和自定义档必须指定工位，没指定就报错并列出可选工位，不问决策模型、不需要密钥；决策模型档没指定才问决策模型。指定工位或评审角色时不问决策模型；同档候选随机打开时，同一批里优先避开已排首位的「实例＋模型」；关闭时按保存的顺位。生图工位始终按保存的顺位，也不占同批避重的名额；选中时回执附一段交给子线程的说明：可用自带的生图子代理，不用代码或别的办法顶替，成品存到简报给的路径。
+   - **T3「先查后改」**：`access="read"` 且带 `may_implement=true`（或显式指定非生图可写工位）时，候选从非生图可写工位中按本步调查难度与将来改动专业挑选（禁止 `may_implement=true` 与 `access="write"` 或生图工位／评审角色组合；同时非 T3 模式的 `staged` 同样排除生图工位）。首轮 `brief_suffix` 附子线程身份与限定只读说明（本轮只读，直至后续明确授权修改与范围）；默认首次 `delegate_task` 开 `isolation="worktree"`（非 git 仓库、依赖未提交改动或用户要求原地改除外），方案确认后对同一 `childThreadId` 调 `t3_thread_send(mode="queue")` 原地续接并追踪返回的新 `taskId`（不用 `mode="auto"`，不用 `interactionMode="plan"`）。
    - 排除 T3 标为停用、未安装、出错或未登录的实例，以及按 T3 的判断、候选模型的额度窗口已满且未重置的候选（移植 T3 自己的判断函数，覆盖 T3 有额度数据的所有账号；只限某个模型或模型组的窗口只排除对应模型）。T3 缓存读不到或格式不认识时不排除，由 T3 判断。
    - T3 明确拒绝了实例、模型或档位且没有建任务时，boss 用同一请求号换同工位下一个候选，并在汇报里说明；已有任务号、超时、断线、权限被拒一律不换、不重派。候选全部不可用就直说，不退回 AgentNave 启动。被拒的推理档不悄悄去掉。
    - 三份列表各管一件事：`recommend_seat` 不带任务调用时返回 T3 工位与评审工位目录，按档位派发只看它；用户点名时只看 T3 自己的模型列表；`list_members` 只列会议成员，只在开会时用。
    - `start_agent`、`start_agents` 在 T3 主线程直接拒绝并指路。开会、收件、转交和历史工具不变。
-   - T3 任务由 T3 展示，不进 AgentNave 历史、冷却和同目录提醒。只读靠回执附的只读说明写进简报，不是权限隔离。
-   - T3 里的 Antigravity 拿不到可直接调用的 `delegate_task`，`recommend_seat` 回执在派法后加一句：不试 MCP 调用，直接用 T3 的 `acp-mcp-call` 终端备用调用派发。
-   - T3 子线程里，选工位、派发、开会和转交工具都拒绝，说明它只完成自己的任务。
+   - T3 任务由 T3 展示，不进 AgentNave 历史、冷却和同目录提醒。每个选中项的 `brief_suffix` 均附一句 T3 派生子线程身份声明（随简报进入子线程自身上下文，不被共享 MCP 缓存覆盖）；只读靠回执附的只读说明写进简报，不是权限隔离。
+   - 当回执包含写任务选中项时，`next` 追加简短的中立收尾提示：不主动调用 `t3_worktree_handoff`，终态后以 `t3_thread_read(childThreadId)` 查实际 `worktreePath` 与 `branch`，核对提交与工作区改动后整合，随后按用户规则或 T3 清理策略决定清理或保留（清理前须确认已合入且目录干净、不强制删除；未合入或有未提交改动一律保留并报路径）。
+   - T3 里的 Antigravity 在 `recommend_seat` 回执中放宽直调约束：若工具列表已露出 `delegate_task` 则直接调用，缺失时经 T3 的 `acp-mcp-call delegate_task -` 标准输入桥接调用（按当前平台仅输出对应写法：POSIX 默认 `<<'T3_JSON'` heredoc，Windows 用 PowerShell 管道）。
+   - T3 子线程里，选工位、派发、开会和转交工具在调用入口硬拒绝，报错明确说明当前是 T3 派生子线程、只完成自己的任务。
 5. **规则与说明**。
    - 开关打开且档位有 T3 模式时，App 在勾选的 Claude、Codex、Antigravity 和 CodeBuddy 各自规则块里把派法分成两节：共用条目只写一份，后面依次是「不在 T3 Code 里时这样派」（普通派法、固定工位行和生图行）和「在 T3 Code 里这样派」（见下，第一条按档位取一种）。自定义档只在用户正文后追加 T3 一节，不改正文、不给正文加标题。开关关着或其他档位不加任何标题。按「在不在 T3 Code 里」分节，不按有没有 `delegate_task` 工具：T3 的系统说明从首步就写明运行环境，工具可能晚加载。首次派发只靠这一节。
    - 授权、小事边界、并行写入、开会、评审和验收都用该档正文，T3 只换派法。
    - 用户点名 CLI、T3 账号或模型时不选工位，按 T3 的模型列表直接派；只点名 CLI 时由 boss 选模型并说明，不保证是工位里存的那个。
-   - MCP 说明在 T3 主线程和子线程各用一段专用文字放在最前面；普通连接的说明不变。
+   - MCP 说明在所有已识别 T3 宿主的主线程与子线程之间保持逐字节一致：T3 编排生效时使用同一段角色中立的 T3 前缀（同时覆盖主线程派发／不主动 handoff 边界与子线程禁止编排边界）及一致的 `list_tools` 投影；T3 编排未生效时主／子同样共用一致说明（附统一条件式子线程提示）；普通连接的说明不变。
    - 弱模型（如 Haiku）当 boss 不保证先选工位。
    - 勾选了认不出的 CLI（Grok、Pi）时，规则块多一节，节首点名这些 CLI；分工协作、决策模型和自定义档同样把派法分成「不在 T3 Code 里时这样派」和这一节：
 
@@ -89,10 +98,10 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
 
    > ### 在 T3 Code 里这样派，不用上面的派法和工位
    >
-   > - 任何派出的任务（含只读调查和评审）先调 AgentNave `recommend_seat`【决策模型：「 由决策模型选工位」】【分工协作、自定义：「：不带任务先取 T3 工位，按任务类型和难度选一个填进 `seat`」】，再按回执用 `delegate_task`；工位是用户指定的设置，同 CLI 也这样派，不用 `start_agent`、`start_agents`。评审把角色名填进 `seat`，只把允许同时执行的独立任务一次交出。
+   > - 任何派出的任务（含只读调查和评审）先调 AgentNave `recommend_seat`【决策模型：「 由决策模型选工位」】【分工协作、自定义：「：不带任务先取 T3 工位，按任务类型和难度选一个填进 `seat`」】，再按回执用 `delegate_task`；工位是用户指定的设置，同 CLI 也这样派，不用 `start_agent`、`start_agents`。先查后改的调查在 `access="read"` 时标 `may_implement=true`（或指定非生图可写工位），确认后对同一子线程用 `t3_thread_send(mode="queue")` 续接。评审把角色名填进 `seat`，只把允许同时执行的独立任务一次交出。
    > - 选位工具没列出就先加载或稍等，仍不可用就告诉用户，不跳过选位，也不因此自己做完。
    > - 用户点名 CLI、T3 账号或模型时，按 T3 的模型列表直接派，说明用了哪个模型；用不了就告诉用户，不换别的。
-   > - 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3。
+   > - 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3，不主动调用 `t3_worktree_handoff`（主目录上的写任务给子任务开 `isolation:"worktree"`，已在目标任务 worktree 且单人写时用 `shared`）。
 
 6. **后台等**。只要识别为 T3 主线程，不看 T3 编排是否打开，Claude、Codex 和 Antigravity 的会议和 AgentNave 派发都用后台命令等收件箱；Claude 与 Codex 在命令结束时由 T3 叫醒，Antigravity 用 `run_command` 把 `WaitMsBeforeAsync` 设成 500 让命令转后台，命令结束时 agy 自己唤醒，不调用 `t3_background_wait`；Antigravity 仍要求 `agy --version` 不低于 [ADR-0114](0114-tui-runtime-like-a-user.md) 的门槛，探测不通过时退回阻塞等待，探测只放行 T3 启动用的 `acp` 子命令；CodeBuddy 在 T3 主线程用阻塞 `wait`，因为它的后台命令结束后不会被唤醒（2026-11-25 实测）；`grok agent …` 模式按 [ADR-0114](0114-tui-runtime-like-a-user.md) 的非交互宿主处理，只能前台等，探测不放行，交互式 `grok` 不变；Windows 上命令的引号没有核实过能在 T3 用的终端里运行，等待不变；其他宿主在 T3 里没有识别，等待不变；提前返回（如卡住提醒）处理后要重新挂上。
 7. **转交**。T3 内换账号、分叉、新线程用 T3 的；跨出或跨进 T3 用 AgentNave 转交；没说去哪就问。T3 里换账号后聊天 ID 会变，旧会议不能续开，第一版接受。
