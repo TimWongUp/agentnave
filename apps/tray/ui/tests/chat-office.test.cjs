@@ -4096,6 +4096,7 @@ test("ChatDerived renders boss-side derived list alongside meetings, handles sin
 test("Actions.workspaceMenu includes 结束全部派生终端（N） when workspace has derived sessions", async () => {
   const bodyChildren = [];
   const closedWorkspaces = [];
+  const closedTerminals = [];
   const makeMenuNode = (tag, attrs = {}, ...kids) => {
     const flat = kids.flat(Infinity).filter(x => x != null && x !== false);
     const listeners = {};
@@ -4128,7 +4129,9 @@ test("Actions.workspaceMenu includes 结束全部派生终端（N） when worksp
     ChatTerminal: {
       derivedOf: id => (id === "ws-1" ? [{ terminal: 10 }, { terminal: 11 }] : []),
       closeDerived: id => closedWorkspaces.push(id),
-      exitedOf: () => null,
+      // A running boss terminal (exit null) still offers to be ended (ADR-0132).
+      workspaceTerminalOf: id => (id === "ws-1" ? { id: 7, exit: null } : null),
+      close: id => closedTerminals.push(id),
     },
     setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
   });
@@ -4140,6 +4143,10 @@ test("Actions.workspaceMenu includes 结束全部派生终端（N） when worksp
   assert.equal(closeAllBtn.textContent, "结束全部派生终端（2）");
   closeAllBtn.listeners.click[0]();
   assert.deepEqual(closedWorkspaces, ["ws-1"]);
+  const endBtn = menu.children.find(b => b.textContent === "结束终端");
+  assert.ok(endBtn);
+  endBtn.listeners.click[0]();
+  assert.deepEqual(closedTerminals, [7]);
 });
 
 test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-derived/stop/close-derived endpoints", async () => {

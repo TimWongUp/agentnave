@@ -1249,10 +1249,8 @@ const ChatTerminal = (() => {
   };
   const showing = () => Boolean(t.shown != null && el.drawer?.classList?.contains?.("term-mode"));
   const showingDerived = () => showing() && Boolean(byId(t.shown)?.derived);
-  const exitedOf = (group) => {
-    const x = ofWorkspace(group);
-    return x && x.exit != null ? x : null;
-  };
+  // The workspace's own terminal, running or ended (ADR-0132: either way the row offers to end it).
+  const workspaceTerminalOf = (group) => ofWorkspace(group) || null;
   function openBoss() {
     if (!state.loaded) return false;
     const x = terminalOf(state.loaded);
@@ -1298,7 +1296,7 @@ const ChatTerminal = (() => {
     derivedSummary, derivedRowId, parseDerivedRowId, decorateDerivedOffice, rowPath, isDerivedRowId,
     isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate,
     menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal,
-    displayState, bossOpensTerminal, bossActivity, running, showing, showingDerived, exitedOf,
+    displayState, bossOpensTerminal, bossActivity, running, showing, showingDerived, workspaceTerminalOf,
     openBoss, openDerived, openDerivedOffice, resumeDerived, stayOnMessages, revive, closeDerived,
     focusFrame, close,
   };

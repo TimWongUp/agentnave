@@ -763,7 +763,7 @@ const Actions = {};
     const g = state.groupsData.find((x) => x.group === id);
     if (!g) return;
     const pinned = isGroupPinned(id);
-    const endedTerm = typeof ChatTerminal !== "undefined" ? ChatTerminal?.exitedOf?.(id) : null;
+    const term = typeof ChatTerminal !== "undefined" ? ChatTerminal?.workspaceTerminalOf?.(id) : null;
     const derivedCount = typeof ChatTerminal !== "undefined"
       ? (ChatTerminal?.liveDerivedCount?.(id) ?? (ChatTerminal?.derivedOf?.(id)?.filter((d) => d.terminal != null && d.derived_state !== "dormant" && d.derived_state !== "exited").length || 0))
       : 0;
@@ -771,7 +771,7 @@ const Actions = {};
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },
       workspaceRenameItem(g),
-      endedTerm && { label: L("结束终端", "End terminal"), run: () => ChatTerminal.close(endedTerm.id) },
+      term && { label: L("结束终端", "End terminal"), danger: true, run: () => ChatTerminal.close(term.id) },
       derivedCount > 0 && {
         label: L(`结束全部派生终端（${derivedCount}）`, `End all derived terminals (${derivedCount})`),
         danger: true,
