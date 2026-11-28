@@ -5,6 +5,7 @@ use tempfile::TempDir;
 mod accounts;
 mod decision_seats;
 mod faults;
+mod hermes_yaml;
 mod meeting_skill;
 mod reload_guidance;
 mod t3_antigravity;
