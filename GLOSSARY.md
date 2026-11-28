@@ -73,7 +73,7 @@ _Avoid_: 工作区
 _Avoid_: 迁移、合并工作区
 
 **派生会话（Derived Session）**:
-**Manager** 以终端模式派出的子代理，运行在 **Tray App** 内嵌终端并挂在所属 **agent** 下，用户可直接旁观、插话或批准权限；消息视图显示整段对话（boss 派的回合与用户自己发起的回合）；可再派后台子代理和开会，派出的子代理挂在它下面，但不能再开派生会话（[ADR-0109](docs/adr/0109-in-app-derived-sessions.md)、[ADR-0124](docs/adr/0124-derived-session-lifecycle.md)、[ADR-0128](docs/adr/0128-derived-session-full-conversation.md)）。
+**Manager** 以终端模式派出的子代理，在 **Tray App** 中挂在所属 **agent** 下方并拥有独立的派生办公室与内嵌终端，用户可直接旁观、插话或批准权限；在父办公室中列于 boss 旁供快速回看上游整段对话（boss 派的回合与用户自己发起的回合）；可再派后台子代理和开会并展示在自己的派生办公室中，但不能再开派生会话（[ADR-0109](docs/adr/0109-in-app-derived-sessions.md)、[ADR-0124](docs/adr/0124-derived-session-lifecycle.md)、[ADR-0128](docs/adr/0128-derived-session-full-conversation.md)、[ADR-0130](docs/adr/0130-derived-office-and-boss-side-list.md)）。
 _Avoid_: 侧边会话、fork（不复制 boss 的对话上下文）
 
 **Conversation**:

@@ -127,9 +127,10 @@
 | 0121 | [接入 T3 Code：T3 里由 T3 执行单独指派，AgentNave 只选工位、开会和转交](0121-t3-code-orchestration.md) | 已接受 | 修订 ADR-0030、0037、0038、0041、0068、0074、0087、0089、0090、0093、0108、0114、0117（仅 T3 主线程且开启时）；2026-11-25 自身修订：支持生图工位、独立 boss 勾选、取消首次预填；2026-11-27 自身修订：排除内置终端、全宿主主子同文同 schema、先查后改、条件直调与 stdin 桥接、worktree 边界与中立收尾 |
 | 0122 | [并行分工并入分工协作，两个派活档共用正文和三个开关](0122-merge-split-and-parallel-presets.md) | 已接受 | 修订 ADR-0037、ADR-0051、ADR-0068、ADR-0073、ADR-0087、ADR-0117 |
 | 0123 | [决策模型支持多平台与本机 System One 端点](0123-multi-decision-model-providers.md) | 已接受 | 修订 ADR-0029、ADR-0044、ADR-0087；沿用 ADR-0093、ADR-0121 |
-| 0124 | [派生会话空闲时结束进程、随时可续，随 boss 关闭，在办公室单独成区](0124-derived-session-lifecycle.md) | 已接受 | 修订 ADR-0109；沿用 ADR-0114、ADR-0120；第 4 节按会话读取的推迟由 ADR-0128 作废 |
+| 0124 | [派生会话空闲时结束进程、随时可续，随 boss 关闭，在办公室单独成区](0124-derived-session-lifecycle.md) | 部分修订 | 修订 ADR-0109；沿用 ADR-0114、ADR-0120；第 4 节按会话读取的推迟由 [ADR-0128](0128-derived-session-full-conversation.md) 作废；第 1 节办公室分区、左栏停留在父办公室与父工作区终端宽由 [ADR-0130](0130-derived-office-and-boss-side-list.md) 修订 |
 | 0125 | [建隔离目录和 git worktree add 一样执行仓库的 hooks、filter 与 LFS](0125-isolated-dirs-follow-git-worktree.md) | 已接受 | 修订 ADR-0085、ADR-0092；沿用 ADR-0098 |
 | 0126 | [托盘的 Git 与 PR 只显示状态，不再提供提交、推送、开 PR 等操作](0126-tray-git-status-read-only.md) | 已接受 | 修订 ADR-0115 第 3、5 节与对 ADR-0029 的补充 |
 | 0127 | [按 CLI 配置单账号并发上限，跨服务进程计数并在选位时按顺位回退](0127-per-account-concurrency-limit.md) | 已接受 | 补充 ADR-0025、ADR-0089；沿用 ADR-0029、ADR-0108、ADR-0109、ADR-0120、ADR-0121 |
-| 0128 | [派生会话显示整段对话、boss 按需读取，boss 工位按真实活动显示，派生派出的子代理挂在它下面](0128-derived-session-full-conversation.md) | 已接受 | 修订 ADR-0109 第 6 节、ADR-0124 第 4 节 |
+| 0128 | [派生会话显示整段对话、boss 按需读取，boss 工位按真实活动显示，派生派出的子代理挂在它下面](0128-derived-session-full-conversation.md) | 部分修订 | 修订 ADR-0109 第 6 节、ADR-0124 第 4 节；第 5 节第三层左栏挂靠与「打开派生会话」跳回父办公室由 [ADR-0130](0130-derived-office-and-boss-side-list.md) 修订 |
 | 0129 | [用量统计扩至 90 天预聚合小时桶、本机全项目归因与常用本机 Agent 自动发现](0129-usage-90d-all-agents-and-projects.md) | 已接受 | 修订 ADR-0106 的覆盖范围、90 天小时预聚合存储与本机全项目归因边界；沿用 ADR-0106 其余边界、ADR-0119、ADR-0121 |
+| 0130 | [派生会话拥有独立派生办公室，左栏收敛为两层，父办公室改在 boss 旁列出派生](0130-derived-office-and-boss-side-list.md) | 已接受 | 修订 ADR-0124 第 1 节、ADR-0128 第 5 节；沿用 ADR-0109、ADR-0124 其余条款、ADR-0128 其余条款 |
