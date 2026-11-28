@@ -122,7 +122,9 @@ const ChatGit = (() => {
       const tid = Number(g.group.slice(5));
       if (Number.isFinite(tid)) return { kind: "terminal", id: tid };
     }
-    if (g.derived === true) return null;
+    if (g.derived === true) {
+      return g.child_workspace_id ? { kind: "workspace", id: g.child_workspace_id } : null;
+    }
     return g.group ? { kind: "workspace", id: g.group } : null;
   }
 
@@ -176,7 +178,9 @@ const ChatGit = (() => {
     if (typeof g.group === "string" && g.group.startsWith("term-")) {
       return store.snap.terminals?.[g.group.slice(5)] || null;
     }
-    if (g.derived === true) return null;
+    if (g.derived === true) {
+      return g.child_workspace_id ? (store.snap.workspaces?.[g.child_workspace_id] || null) : null;
+    }
     return store.snap.workspaces?.[g.group] || null;
   }
 

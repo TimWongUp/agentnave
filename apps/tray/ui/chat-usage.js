@@ -96,7 +96,7 @@ window.ChatUsage = (() => {
       return;
     }
     if (next === group) {
-      if (data && document.documentElement.lang !== lang) paint(data);
+      if (data?.has_data && document.documentElement.lang !== lang) paint(data);
       return;
     }
     group = next;

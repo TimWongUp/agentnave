@@ -1145,6 +1145,7 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
     location: { origin: "null" },
     Date,
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   const { ChatTerminal } = context;
 
@@ -1692,6 +1693,7 @@ test("clicking boss desk returns to terminal with focus, and at most one selecti
   context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? frameProto() : h(tag, attrs, ...children));
   context.AN.h = context.h;
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   const chat = {
@@ -1820,6 +1822,7 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     location: { origin: "null" },
     Date,
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
@@ -2128,6 +2131,7 @@ test("derived terminals nest under parent workspace without counting self-chat a
   });
   context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? Object.assign(makeNode("iframe"), { contentWindow: { postMessage() {} } }) : h(tag, attrs, ...children));
   context.AN.h = context.h;
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   await context.ChatTerminal.refresh();
@@ -2156,8 +2160,8 @@ test("derived terminals nest under parent workspace without counting self-chat a
   const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
   assert.equal(blockedChild.status, "waiting");
 
-  // A derived desk's card in the parent's office matches hashed desk_key and falls back to thread:<native>,
-  // defaulting to messages until the user switches to terminal.
+  // Parent workspace never embeds a derived terminal even when viewing a derived desk's messages;
+  // the derived terminal is hosted directly in its own derived office (ADR-0130).
   mockSessions[1].derived_busy = false;
   mockSessions[1].blocked_kind = null;
   mockSessions[1].native = "sid-1";
@@ -2168,18 +2172,18 @@ test("derived terminals nest under parent workspace without counting self-chat a
   context.ChatTerminal.column("ws-parent", "claude", "claude");
   assert.equal(context.ChatTerminal.showingDerived(), false);
   drAll._after[0].children[1].listeners.click[0]();
-  assert.equal(el.drTitle.textContent, "派生调试");
-  assert.equal(context.ChatTerminal.showingDerived(), true);
-  state.drawer = { kind: "desk", key: "thread:sid-1" };
-  context.ChatTerminal.column("ws-parent", "claude", "claude");
-  assert.equal(el.drTitle.textContent, "派生调试");
-  assert.equal(context.ChatTerminal.showingDerived(), true);
-  state.drawer = { kind: "desk", key: "thread:other" };
-  context.ChatTerminal.column("ws-parent", "claude", "claude");
   assert.equal(el.drTitle.textContent, "boss");
   assert.equal(context.ChatTerminal.showingDerived(), false);
+
+  // Entering the derived office hosts the derived terminal directly by default when alive.
+  const drvGroup = context.ChatTerminal.derivedRowId("ws-parent", "thread:1fd2c8006815717d");
+  state.selected = state.loaded = drvGroup;
   state.drawer = { kind: "all" };
-  state.loaded = "term-20";
+  context.ChatTerminal.column(drvGroup, "codex", "codex");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(context.ChatTerminal.showingDerived(), true);
+  state.drawer = { kind: "all" };
+  state.selected = state.loaded = "term-20";
 
   // Stale refresh() responses must not overwrite a newer terminal list.
   const origLoad = context.AN.load;
@@ -2490,6 +2494,7 @@ test("leaving terminal mode clears .term-mode before applyFolds and long/peer/br
 
   vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
   vm.runInContext(readFileSync(`${__dirname}/../chat-messages.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   const chatSrc = readFileSync(`${__dirname}/../chat.js`, "utf8");
   vm.runInContext(chatSrc.slice(0, chatSrc.indexOf("for (const link of")), context);
@@ -3611,6 +3616,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
     context.ChatTerminal?.column(context.state.selected, "codex", "codex");
   };
   context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   await context.ChatTerminal.refresh();
@@ -3689,20 +3695,21 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.refresh();
   assert.equal(loadUrls.at(-1), "/app/terminal/state");
 
-  // 3. Live derived hides stop button and shows mode switch; dormant shows Resume button without mode switch.
+  // 3. Live derived shows mode switch and Close terminal; dormant shows Resume button without mode switch.
   context.ChatTerminal.readMessages(true);
   context.ChatTerminal.column("term-11", "codex", "codex");
   const stopBtn = drAll._after[1];
   const modesNode = drAll._after[0];
   assert.equal(modesNode.hidden, false);
-  assert.equal(stopBtn.hidden, true);
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "关闭终端");
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(modesNode.hidden, true);
   assert.equal(stopBtn.hidden, false);
   assert.equal(stopBtn.textContent, "续接");
   assert.equal(stopBtn.classList.contains("start"), true);
 
-  // 4. Clicking a derived row navigates to its parent workspace desk without calling wake/open-derived;
+  // 4. Clicking a dormant derived row enters its derived office on messages without waking;
   // clicking the header Resume button wakes it while messages stay up and disables the button.
   const s15 = sessions.find(x => x.id === 15);
   const toMessagesBtn = drAll._after[0].children[0];
@@ -3719,10 +3726,10 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.refresh();
   assert.equal(wakes(), 0, "polling never wakes");
 
-  // Clicking a merged sidebar row with desk_key & parent_workspace_id opens #desk:<key> in parent without waking.
+  // Clicking a merged sidebar row opens its own derived office (/chat/drv-...) without waking.
   navigated.length = 0;
   context.ChatTerminal.openDerived(d15.group);
-  assert.deepEqual(navigated, ["/chat/ws-1#desk:thread%3At15"]);
+  assert.deepEqual(navigated, [`/chat/${d15.group}`]);
   assert.equal(wakes(), 0);
 
   context.state.selected = context.state.loaded = "term-15";
@@ -3755,7 +3762,8 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await flush();
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), true, "the terminal opens once it is up");
-  assert.equal(stopBtn.hidden, true);
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "关闭终端");
   assert.ok(inFrame15());
   const oldFrame15 = createdFrames.at(-1);
 
@@ -3838,26 +3846,27 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   }
   await redormant();
 
-  // a desk with no terminal row opens through open-derived with the same attach params
-  context.state.selected = context.state.loaded = "ws-1";
-  context.state.drawer = { kind: "desk", key: "thread:gone" };
-  context.state.chat = { group: "ws-1" };
-  context.state.ctx = { desks: new Map([["thread:gone", { derived: true }]]) };
+  // a derived office with no terminal row opens through open-derived with the same attach params
+  const goneDrv = context.ChatTerminal.derivedRowId("ws-1", "thread:gone");
+  context.state.selected = context.state.loaded = goneDrv;
+  context.state.drawer = { kind: "all" };
+  context.state.chat = { group: goneDrv, derived: true, parent_workspace_id: "ws-1", parent_desk_key: "thread:gone" };
+  context.state.ctx = { desks: new Map() };
   wakeFail = true;
-  await context.ChatTerminal.revive({ group: "ws-1", deskKey: "thread:gone" });
+  await context.ChatTerminal.revive({ group: goneDrv, parentGroup: "ws-1", deskKey: "thread:gone" });
   assert.equal(postCalls.at(-1), "/app/terminal/open-derived?workspace=ws-1&desk=thread%3Agone&light=0&cols=100&rows=30");
   assert.deepEqual(says.at(-1), ["没有可续接的会话", true]);
-  context.ChatTerminal.column("ws-1", "codex", "codex");
+  context.ChatTerminal.column(goneDrv, "codex", "codex");
   assert.equal(termMode(), false);
   wakeFail = false;
   const release3 = hold();
-  const pendingOpen = context.ChatTerminal.revive({ group: "ws-1", deskKey: "thread:gone" });
-  assert.equal(await context.ChatTerminal.revive({ group: "ws-1", deskKey: "thread:gone" }), false, "no second request");
-  context.ChatTerminal.column("ws-1", "codex", "codex");
+  const pendingOpen = context.ChatTerminal.revive({ group: goneDrv, parentGroup: "ws-1", deskKey: "thread:gone" });
+  assert.equal(await context.ChatTerminal.revive({ group: goneDrv, parentGroup: "ws-1", deskKey: "thread:gone" }), false, "no second request");
+  context.ChatTerminal.column(goneDrv, "codex", "codex");
   assert.equal(sub.textContent, "正在恢复");
   release3();
   assert.equal(await pendingOpen, true);
-  context.ChatTerminal.column("ws-1", "codex", "codex");
+  context.ChatTerminal.column(goneDrv, "codex", "codex");
   assert.equal(termMode(), true);
 
   // 5. Context menus: live derived has Open & Close terminal; dormant has Open, Resume, Close terminal;
@@ -3903,9 +3912,9 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   assert.equal(menus.at(-1).some(i => i.label.includes("关闭全部派生终端")), false);
 });
 
-test("ChatDerived renders separate office derived zone, matches ofDesk states, reads an ended process as idle, and continues on click", async () => {
+test("ChatDerived renders boss-side derived list alongside meetings, handles single/both layout, click/menu, and hides empty open desks", async () => {
   const makeNode = (tag = "div") => {
-    const cls = new Set();
+    const cls = new Set(String(tag).split(".").slice(1));
     return {
       tagName: String(tag).split(".")[0].toUpperCase(),
       hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], listeners: {},
@@ -3944,10 +3953,7 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   const el = {
     boss: makeNode("section"),
     desks: Object.assign(makeNode("div"), { clientWidth: 560 }),
-    derivedZone: Object.assign(makeNode("section"), { hidden: true }),
     desksZone: Object.assign(makeNode("section"), { hidden: false }),
-    derivedDesks: makeNode("div"),
-    derivedCount: makeNode("span"),
     rooms: makeNode("div"),
     fx: makeNode("div"),
     deskCount: makeNode("span"),
@@ -3960,7 +3966,8 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
     away: new Map(), closing: new Map(), known: new Set(), ready: true, drawer: { kind: "all" },
   };
   const opened = [];
-  const revived = [];
+  const openedOffices = [];
+  const resumed = [];
   const menus = [];
   let reviving = false;
   let terminalSessions = [
@@ -3968,16 +3975,19 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
     { id: 102, derived: true, parent_workspace_id: "ws-1", desk_key: "thread:h2", native: "n2", derived_state: "dormant", resumable: true },
     { id: 103, derived: true, parent_workspace_id: "ws-1", desk_key: "thread:h3", native: "n3", derived_state: "uncollected", resumable: true },
   ];
+  let liveOnlyRows = [];
   const ChatTerminal = {
     ofDesk: (group, key) => terminalSessions.find(s => s.parent_workspace_id === group && (s.desk_key === key || `thread:${s.native}` === key)),
     all: () => terminalSessions,
+    derivedOf: () => liveOnlyRows,
     derivedStateOf: x => x.derived_state,
+    derivedMeta: r => ({ text: r.derived_state === "starting" ? "启动中" : "空闲", tone: r.derived_state === "starting" ? "run" : "idle" }),
     isWaking: () => false,
     reviving: () => reviving,
-    revive: async target => revived.push(target),
-    stop: async () => {},
+    openDerived: id => openedOffices.push(["openDerived", id]),
+    openDerivedOffice: (g, k, fb) => openedOffices.push(["openDerivedOffice", g, k, fb]),
+    resumeDerived: target => resumed.push(target),
     close: async () => {},
-    focusFrame() {},
     showing: () => false,
     running: () => false,
     bossOpensTerminal: () => false,
@@ -3992,7 +4002,7 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
     ART: { character: () => "c", figure: makeNode, head: makeNode, lid: makeNode, url: p => p, version: () => 1, canWarp: () => false },
     Laptop: { create: () => ({ laptop: { dress() {} } }) },
     Actions: { roomMenu() {}, openMenu: (_e, items) => menus.push(items) },
-    GROUP: { idle: ["空闲", "idle"] }, pick: () => ["空闲", "idle"], urgent: () => false,
+    GROUP: { idle: ["空闲", "idle"], running: ["运行中", "run"] }, pick: (tbl, k) => tbl[k] || ["空闲", "idle"], urgent: s => s === "running" || s === "review",
     activities: () => [],
     cliOf: () => "Codex", deskChar: () => "c", deskName: d => d.model, deskParts: d => ({ name: d.model, effort: "" }),
     fullHandle: d => d.key, relTime: () => "刚刚", fullTime: () => "2026", shownName: g => g.display_title || g.title || g.label,
@@ -4018,10 +4028,10 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
     group: "ws-1", host: "claude", label: "Claude Code", display_title: "t",
     desks: [
       { key: "emp-1", provider: "codex", model: "gpt-6.1", derived: false, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
-      { key: "thread:h1", provider: "claude", model: "opus", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
-      { key: "thread:n2", provider: "codex", model: "gpt-6.1", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
-      { key: "thread:h3", provider: "antigravity", model: "gemini", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
-      { key: "thread:missing", provider: "claude", model: "haiku", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "thread:h1", provider: "claude", model: "opus", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:01:00Z" },
+      { key: "thread:n2", provider: "codex", model: "gpt-6.1", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:03:00Z" },
+      { key: "thread:h3", provider: "antigravity", model: "gemini", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:02:00Z" },
+      { key: "thread:missing", provider: "claude", model: "haiku", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:04:00Z" },
     ],
     rooms: [], messages: [],
   };
@@ -4033,87 +4043,69 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   };
   context.renderOffice(baseChat, ctx, { running: 0, review: 0 }, false);
 
+  // Open desks exclude derived desks; boss-side shows derived section alone (not .both).
   assert.equal(el.desks.children.length, 1);
   assert.equal(el.deskCount.textContent, " · 1");
-  assert.equal(el.derivedZone.hidden, false);
-  assert.equal(el.derivedDesks.children.length, 4);
-  assert.equal(el.derivedCount.textContent, " · 4");
+  assert.equal(state.bossRec.meets.hidden, false);
+  assert.equal(state.bossRec.meets.classList.contains("both"), false);
+  assert.equal(state.bossRec.meetsSec.hidden, true);
+  assert.equal(state.bossRec.derivedSec.hidden, false);
 
-  const r1 = state.deskRecs.get("thread:h1");
-  const r2 = state.deskRecs.get("thread:n2");
-  const r3 = state.deskRecs.get("thread:h3");
-  const r4 = state.deskRecs.get("thread:missing");
-  assert.equal(r1.el.dataset.mood, "working");
-  assert.equal(r1.say.children[0], "运行中");
-  // A session whose process ended, or a desk with no terminal row, is simply idle: no dimming, no sleep.
-  for (const r of [r2, r4]) {
-    assert.equal(r.el.dataset.mood, "idle");
-    assert.equal(r.say.children[0], "空闲");
-    assert.equal(r.el.classList.contains("dormant"), false);
-  }
-  assert.equal(r3.el.dataset.mood, "review");
-  assert.equal(r3.say.children[0], "待 boss 收取");
+  // Derived rows sorted active first (h3 & h1), then idle by recency (missing then n2).
+  const derivedRows = state.bossRec.derivedSec.children[1].children;
+  assert.equal(derivedRows.length, 4);
+  assert.equal(derivedRows[0].classList.contains("review"), true);
+  assert.equal(derivedRows[1].classList.contains("run"), true);
+  assert.equal(derivedRows[2].classList.contains("run"), false);
+  assert.equal(derivedRows[2].classList.contains("review"), false);
 
-  // Click any derived desk -> always opens messages and never calls revive.
-  r1.el.listeners.click[0]();
+  // Click historical derived row -> stays in parent office and opens desk messages (no revive, no jump).
+  derivedRows[1].listeners.click[0]({ stopPropagation() {} });
   assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:h1" }, {}]);
-  assert.equal(revived.length, 0);
-  r2.el.listeners.click[0]();
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:n2" }, {}]);
-  assert.equal(revived.length, 0);
-  r4.el.listeners.click[0]();
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:missing" }, {}]);
-  assert.equal(revived.length, 0);
+  assert.equal(resumed.length, 0);
+  assert.equal(openedOffices.length, 0);
 
-  // While one comes back, its desk says so.
-  reviving = true;
-  context.renderOffice(baseChat, ctx, { running: 0, review: 0 }, false);
-  assert.equal(r4.say.children[0], "正在恢复");
-  reviving = false;
-
-  // A call just sent has no native session yet: its desk takes the state of the workspace's one
-  // terminal of that CLI still without one, such as Codex asking about trust.
-  const sent = { key: "task:c1:t1", provider: "codex", model: "gpt-6.1", derived: true, status: "running", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" };
-  terminalSessions.push({ id: 104, derived: true, provider: "codex", parent_workspace_id: "ws-1", native: null, exit: null, derived_state: "waiting" });
-  ctx.desks.set(sent.key, sent);
-  ctx.drawn.add(sent.key);
-  context.renderOffice({ ...baseChat, desks: [...baseChat.desks, sent] }, ctx, { running: 0, review: 0 }, false);
-  assert.equal(state.deskRecs.get(sent.key).say.children[0], "等待确认");
-  terminalSessions.pop();
-  ctx.desks.delete(sent.key);
-  ctx.drawn.delete(sent.key);
-
-  // Derived desk context menus: Open, Resume (when no live process), and Close terminal (when terminal row exists).
+  // Context menu on live row vs dormant/missing row.
   const labels = () => JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label)));
-  r1.el.listeners.contextmenu[0]({});
-  assert.deepEqual(labels(), ["打开", "关闭终端"]);
-  r2.el.listeners.contextmenu[0]({});
-  assert.deepEqual(labels(), ["打开", "续接", "关闭终端"]);
-  r4.el.listeners.contextmenu[0]({});
-  assert.deepEqual(labels(), ["打开", "续接"]);
-  // Clicking Resume in context menu opens messages and calls revive.
+  derivedRows[1].listeners.contextmenu[0]({}); // h1 (live running)
+  assert.deepEqual(labels(), ["查看消息", "进入派生办公室", "关闭终端"]);
+  derivedRows[3].listeners.contextmenu[0]({}); // n2 (dormant)
+  assert.deepEqual(labels(), ["查看消息", "进入派生办公室", "续接"]);
+  menus.at(-1).find(i => i.label === "进入派生办公室").run();
+  assert.deepEqual(openedOffices.at(-1), ["openDerivedOffice", "ws-1", "thread:n2", undefined]);
   menus.at(-1).find(i => i.label === "续接").run();
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:missing" }, {}]);
-  assert.deepEqual(JSON.parse(JSON.stringify(revived.at(-1))), { group: "ws-1", deskKey: "thread:missing" });
+  assert.equal(resumed.at(-1).deskKey, "thread:n2");
 
-  // When no derived desks exist, derived zone is hidden.
-  const noDerived = { ...baseChat, desks: [baseChat.desks[0]] };
-  ctx.desks = new Map([[baseChat.desks[0].key, baseChat.desks[0]]]);
-  ctx.drawn = new Set([baseChat.desks[0].key]);
-  context.renderOffice(noDerived, ctx, { running: 0, review: 0 }, false);
-  assert.equal(el.derivedZone.hidden, true);
-  assert.equal(el.derivedDesks.children.length, 0);
-  assert.equal(el.desksZone.hidden, false, "open desks stay while a regular desk exists");
+  // Unpersisted live derived terminal appears in boss-side and clicking it jumps straight to its derived office.
+  liveOnlyRows = [{ group: "term-99", terminal: 99, derived: true, derived_state: "starting", host: "codex", label: "Codex", title: "刚启动的派生", updated: "2026-11-19T00:05:00Z" }];
+  context.renderOffice(baseChat, ctx, { running: 0, review: 0 }, false);
+  const rowsWithLiveOnly = state.bossRec.derivedSec.children[1].children;
+  assert.equal(rowsWithLiveOnly.length, 5);
+  rowsWithLiveOnly[0].listeners.click[0]({ stopPropagation() {} });
+  assert.deepEqual(openedOffices.at(-1), ["openDerived", "term-99"]);
+  liveOnlyRows = [];
 
-  // With only derived desks the empty "open desks" box is not drawn at all; with none at all, its text is one short line.
+  // When both meetings and derived exist, boss-side carries .both and shows both sections.
+  const withRoom = {
+    ...baseChat,
+    rooms: [{ id: "r1", title: "架构评审", status: "idle", seats: [], last_active: "2026-11-19T00:05:00Z" }],
+  };
+  ctx.rooms = new Map([["r1", withRoom.rooms[0]]]);
+  context.renderOffice(withRoom, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.bossRec.meets.classList.contains("both"), true);
+  assert.equal(state.bossRec.meetsSec.hidden, false);
+  assert.equal(state.bossRec.derivedSec.hidden, false);
+
+  // With only derived sessions and no regular desks/optimized, empty open desks zone stays hidden.
   const onlyDerived = { ...baseChat, desks: baseChat.desks.filter(d => d.derived) };
   ctx.desks = new Map(onlyDerived.desks.map(d => [d.key, d]));
   ctx.drawn = new Set(onlyDerived.desks.map(d => d.key));
+  ctx.rooms = new Map();
   context.renderOffice(onlyDerived, ctx, { running: 0, review: 0 }, false);
   assert.equal(el.desksZone.hidden, true);
   context.renderOffice({ ...baseChat, desks: [] }, { ...ctx, desks: new Map(), drawn: new Set() }, { running: 0, review: 0 }, false);
   assert.equal(el.desksZone.hidden, false);
-  assert.equal(el.desks.children[0].children[0], "boss 派活后，工位出现在这里");
+  assert.equal(state.bossRec.meets.hidden, true);
 });
 
 test("Actions.workspaceMenu includes 关闭全部派生终端（N） when workspace has derived sessions", async () => {
@@ -4357,6 +4349,7 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
     context.syncListSelection();
   };
   context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   // Groups: ws-plain has neither terminals nor derived desks; ws-hist has 2 historical derived desks (one with saved title, one falling back to deskName).
@@ -4387,7 +4380,8 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(stableId.startsWith("drv-"), true);
   const firstEl = context.state.items.get(stableId).el;
 
-  // 2. Width flag: ws-plain uses narrow width ("0"), ws-hist uses terminal width ("1") across boss/desk/messages/terminal.
+  // 2. Width flag (ADR-0130): parent offices without their own terminal use narrow width ("0");
+  // derived offices ALWAYS use terminal width ("1").
   context.state.selected = context.state.loaded = "ws-plain";
   context.state.chat = { group: "ws-plain", desks: [] };
   context.state.ctx = { desks: new Map() };
@@ -4401,36 +4395,41 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   context.state.drawer = { kind: "all" };
   context.ChatTerminal.prepare("ws-hist");
   context.ChatTerminal.column("ws-hist", "claude", "claude");
-  assert.equal(appNode.dataset.hasTerm, "1");
+  assert.equal(appNode.dataset.hasTerm, "0", "parent without own terminal keeps narrow width");
 
-  // 3. Highlight moves from boss to derived row when desk is open, and restores on switching back.
+  // 3. Highlight strictly follows state.selected (center canvas); clicking a derived row navigates to its derived office.
   context.renderList();
   assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
   assert.equal(firstEl.classList.contains("on"), false);
 
-  // The whole-page link handler follows hrefs before the row's own click, so they must lead somewhere.
-  assert.equal(firstEl.attributes.href, "/chat/ws-hist#desk:thread%3Asaved");
+  // Even when a derived desk drawer is open in the parent office, parent stays highlighted in the sidebar.
+  context.state.drawer = { kind: "desk", key: "thread:saved" };
+  context.syncListSelection();
+  assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
+  assert.equal(firstEl.classList.contains("on"), false);
+
+  assert.equal(firstEl.attributes.href, `/chat/${stableId}`);
   assert.equal(context.state.items.get("ws-hist").el.attributes.href, "/chat/ws-hist");
 
-  // Clicking historical row inside already-loaded parent calls openScope (no navigation, no revive).
+  // Clicking historical derived row navigates to its derived office (no revive).
   firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "desk", key: "thread:saved" });
-  assert.equal(navigated.length, 0);
+  assert.deepEqual(navigated, [`/chat/${stableId}`]);
   assert.equal(postCalls.length, 0);
+
+  // Inside the derived office: terminal width is fixed ("1"), highlight moves to derived row.
+  context.state.selected = context.state.loaded = stableId;
+  context.state.drawer = { kind: "all" };
+  context.ChatTerminal.prepare(stableId);
+  context.ChatTerminal.column(stableId, "claude", "claude");
+  context.syncListSelection();
+  assert.equal(appNode.dataset.hasTerm, "1");
   assert.equal(firstEl.classList.contains("on"), true);
   assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), false);
-  assert.equal(appNode.dataset.hasTerm, "1");
-
-  // Clicking the boss row leaves the derived desk for boss and restores the boss highlight.
-  context.state.items.get("ws-hist").el.listeners.click[0]({ button: 0, preventDefault() {} });
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "all" });
-  assert.equal(firstEl.classList.contains("on"), false);
-  assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
 
   // 4. Context menu on history-only row is ["打开", "续接"]; resuming adds terminal row while preserving the exact same DOM element!
   context.ChatTerminal.menu(stableId, {});
   assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "续接"]);
-  await context.ChatTerminal.revive({ group: "ws-hist", deskKey: "thread:saved" });
+  await context.ChatTerminal.revive({ group: stableId, parentGroup: "ws-hist", deskKey: "thread:saved" });
   context.renderList();
   const afterWake = context.ChatTerminal.derivedOf("ws-hist");
   assert.equal(afterWake[0].group, stableId);
@@ -4438,14 +4437,16 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(afterWake[0].title, "CLI新标题");
   assert.equal(context.state.items.get(stableId).el, firstEl, "DOM element must be reused in place");
 
-  // Closing terminal keeps row in list as idle with the same element and stable id.
+  // Closing terminal keeps row in list as idle with the same element and stable id, and stays in derived office on messages.
   await context.ChatTerminal.close(99);
   context.renderList();
   const afterClose = context.ChatTerminal.derivedOf("ws-hist");
   assert.equal(afterClose[0].group, stableId);
   assert.equal(afterClose[0].terminal, null);
   assert.equal(context.state.items.get(stableId).el, firstEl);
+  context.ChatTerminal.column(stableId, "claude", "claude");
   assert.equal(appNode.dataset.hasTerm, "1");
+  assert.equal(context.ChatTerminal.showing(), false);
 
   // 5. Visibility: historical-only derived rows do NOT make boss mustShow and hide when project is folded;
   // terminal-backed derived rows DO make boss mustShow and stay visible when folded.
@@ -4464,18 +4465,18 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(firstEl.getAttribute("data-folded"), null);
   assert.equal(context.state.items.get(afterWake[1].group).el.getAttribute("data-folded"), "true");
 
-  // 6. Asking for the messages while the session is being brought back keeps them once it is up.
+  // 6. Asking for messages while a session is being brought back keeps them once it is up.
   sessions = [];
   await context.ChatTerminal.refresh();
-  context.state.selected = context.state.loaded = "ws-hist";
-  context.state.drawer = { kind: "desk", key: "thread:saved" };
-  const resuming = context.ChatTerminal.revive({ group: "ws-hist", deskKey: "thread:saved" });
-  firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
+  context.state.selected = context.state.loaded = stableId;
+  context.state.drawer = { kind: "all" };
+  const resuming = context.ChatTerminal.revive({ group: stableId, parentGroup: "ws-hist", deskKey: "thread:saved" });
+  context.ChatTerminal.stayOnMessages("ws-hist", "thread:saved");
   await resuming;
-  context.ChatTerminal.column("ws-hist", "claude", "claude");
+  context.ChatTerminal.column(stableId, "claude", "claude");
   assert.equal(context.ChatTerminal.showing(), false);
 
-  // 7. A terminal opened before its session had an id stays open, then moves to its desk once history has it.
+  // 7. Seamless follow: term-120 -> drv-... once history has it -> child_workspace_id once it dispatches.
   sessions = [{ id: 120, provider: "codex", cwd: "/repo", exit: null, derived: true, derived_state: "starting", parent_workspace_id: "ws-hist", desk_key: null, native: null, workspaces: [] }];
   await context.ChatTerminal.refresh();
   assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
@@ -4484,16 +4485,55 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
   assert.equal(context.ChatTerminal.office("term-120").terminal, 120);
   context.state.groupsData[1].derived.push({ key: "thread:fresh", provider: "codex", model: "gpt-6.1" });
-  assert.equal(context.ChatTerminal.follow("term-120"), "ws-hist");
-  assert.equal(context.state.hashKey, "desk:thread:fresh");
-  // asking for the messages meanwhile drops that wish
-  context.ChatTerminal.stayOnMessages("ws-hist", "thread:fresh");
-  assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), false);
+  const freshDrv = context.ChatTerminal.derivedRowId("ws-hist", "thread:fresh");
+  assert.equal(context.ChatTerminal.follow("term-120"), freshDrv);
+  // Once it dispatches and spawns a child workspace, drv-... seamlessly follows to child_workspace_id!
+  context.state.groupsData[1].derived.at(-1).child_workspace_id = "ws-fresh-child";
+  context.state.groupsData.push(makeBoss("ws-fresh-child", "/p1", { parent_workspace_id: "ws-hist", parent_desk_key: "thread:fresh" }));
+  assert.equal(context.ChatTerminal.follow(freshDrv), "ws-fresh-child");
 });
 
 test("derived desk message view merges user turns as 用户 without mutating c.messages and surfaces log errors", async () => {
   const { context } = auditUI();
-  const h = context.h;
+  const baseH = context.h;
+  const h = (...args) => {
+    const node = baseH(...args);
+    if (!node.insertBefore) {
+      node.insertBefore = (child, ref) => {
+        const i = ref ? node.children.indexOf(ref) : -1;
+        if (i >= 0) node.children.splice(i, 0, child);
+        else node.children.push(child);
+        return child;
+      };
+    }
+    if (!("firstChild" in node)) {
+      Object.defineProperty(node, "firstChild", { get: () => node.children[0] || null });
+    }
+    if (!node.classList) {
+      const set = new Set(String(node.className || "").split(/\s+/).filter(Boolean));
+      node.classList = {
+        add: (...ks) => { ks.forEach(k => set.add(k)); node.className = [...set].join(" "); },
+        remove: (...ks) => { ks.forEach(k => set.delete(k)); node.className = [...set].join(" "); },
+        toggle: (k, force) => {
+          const on = force === undefined ? !set.has(k) : Boolean(force);
+          if (on) set.add(k); else set.delete(k);
+          node.className = [...set].join(" ");
+          return on;
+        },
+        contains: (k) => set.has(k),
+      };
+    }
+    if (!node.replaceChildren) {
+      node.replaceChildren = (...kids) => { node.children = kids; };
+    }
+    if (!node.addEventListener) {
+      node.listeners = node.listeners || {};
+      node.addEventListener = (ev, fn) => {
+        (node.listeners[ev] ||= []).push(fn);
+      };
+    }
+    return node;
+  };
   const turnsJs = readFileSync(`${__dirname}/../chat-derived-turns.js`, "utf8");
   const extract = (name) => {
     const start = turnsJs.indexOf(`function ${name}(`);
@@ -4813,10 +4853,11 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     chat: groupsData[1],
     ctx: { desks: new Map(), rooms: new Map() },
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nthis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nthis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
-  // 1. Subagent workspace is nested under derived row, capped at 1 level (ws-too-deep stays top-level).
+  // 1. Subagent workspace merges into the 2nd-level derived row (2 levels max, no gi-grandchild; ws-too-deep stays top-level).
   assert.deepEqual(
     JSON.parse(JSON.stringify(context.ChatTerminal.derivedChildrenOf("ws-boss", "thread:d1").map(g => g.group))),
     ["ws-sub"],
@@ -4825,21 +4866,30 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     JSON.parse(JSON.stringify(context.ChatTerminal.derivedChildrenOf("ws-sub", "thread:too-deep"))),
     [],
   );
-  const derivedId = context.ChatTerminal.derivedOf("ws-boss")[0].group;
+  const derivedRow = context.ChatTerminal.derivedOf("ws-boss")[0];
+  assert.equal(derivedRow.group, "ws-sub");
+  assert.equal(derivedRow.child_workspace_id, "ws-sub");
+  assert.equal(derivedRow.live, true, "child workspace running status keeps derived row live");
   context.renderList();
   assert.deepEqual(
     JSON.parse(JSON.stringify(context.state.order)),
-    ["ws-too-deep", "ws-boss", derivedId, "ws-sub"],
+    ["ws-too-deep", "ws-boss", "ws-sub"],
   );
-  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-grandchild"), true);
-  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-grandchild"), false);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child"), true);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child-first"), true);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child-last"), true);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-grandchild"), false);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child"), false);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-first"), false);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-last"), false);
 
-  // 2. While owning derived terminal lives, child workspace shows "打开派生会话" instead of "续接".
+  // 2. Inside ws-sub (the derived office), live derived terminal is hosted directly (Close terminal while live; Resume once dormant).
   assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub").id, 50);
   context.ChatTerminal.column("ws-sub", "codex", "codex");
   const stopBtn = drAllAfter.find(n => n.classList.contains("dr-stop"));
-  assert.equal(stopBtn.textContent, "打开派生会话");
+  assert.equal(stopBtn.textContent, "关闭终端");
   assert.equal(stopBtn.hidden, false);
+  assert.equal(context.ChatTerminal.showingDerived(), true);
 
   // Stop confirmation on boss AND on derived warns about own busy tasks.
   await context.ChatTerminal.stop(50);
@@ -4853,11 +4903,786 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     "stopping parent boss must warn when derived session has own busy tasks",
   );
 
-  // 3. Once derived session exits, liveDerivedOwnerOf returns null (resume allowed again).
+  // 3. Once derived session exits (dormant), derived office switches to Resume (and keeps running child status in sidebar).
   sessions[0].exit = 0;
   sessions[0].derived_state = "dormant";
   await context.ChatTerminal.refresh();
   assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub"), null);
+  const afterExitRow = context.ChatTerminal.derivedOf("ws-boss")[0];
+  assert.equal(afterExitRow.live, true, "running child workspace keeps dormant derived row active");
+  assert.equal(context.ChatTerminal.derivedMeta(afterExitRow).text, "运行中");
   context.ChatTerminal.column("ws-sub", "codex", "codex");
   assert.equal(stopBtn.textContent, "续接");
+});
+
+test("derived office renders parent back-link, derived boss mood, and dual message perspectives (direct origin vs directory pinned card)", async () => {
+  const { context } = auditUI();
+  const baseH = context.h;
+  const h = (...args) => {
+    const node = baseH(...args);
+    if (!node.insertBefore) {
+      node.insertBefore = (child, ref) => {
+        const i = ref ? node.children.indexOf(ref) : -1;
+        if (i >= 0) node.children.splice(i, 0, child);
+        else node.children.push(child);
+        return child;
+      };
+    }
+    if (!("firstChild" in node)) {
+      Object.defineProperty(node, "firstChild", { get: () => node.children[0] || null });
+    }
+    if (!node.classList) {
+      const set = new Set(String(node.className || "").split(/\s+/).filter(Boolean));
+      node.classList = {
+        add: (...ks) => { ks.forEach(k => set.add(k)); node.className = [...set].join(" "); },
+        remove: (...ks) => { ks.forEach(k => set.delete(k)); node.className = [...set].join(" "); },
+        toggle: (k, force) => {
+          const on = force === undefined ? !set.has(k) : Boolean(force);
+          if (on) set.add(k); else set.delete(k);
+          node.className = [...set].join(" ");
+          return on;
+        },
+        contains: (k) => set.has(k),
+      };
+    }
+    if (!node.replaceChildren) {
+      node.replaceChildren = (...kids) => { node.children = kids; };
+    }
+    if (!node.addEventListener) {
+      node.listeners = node.listeners || {};
+      node.addEventListener = (ev, fn) => {
+        (node.listeners[ev] ||= []).push(fn);
+      };
+    }
+    return node;
+  };
+  const navigated = [];
+  const openedScopes = [];
+  const loadCalls = [];
+  let turnsReply = {
+    turns: [
+      {
+        index: 1,
+        user_text: "派生里我追问一下",
+        user_time: "2026-11-28T00:12:00Z",
+        assistant_text: "派生终端回复",
+        assistant_time: "2026-11-28T00:12:05Z",
+        status: "succeeded",
+        model: "claude-opus-4-6",
+      },
+    ],
+  };
+
+  // Load ChatDerived + tpDirectory + renderConv helpers in a focused VM context.
+  const els = new Map([
+    ["boss", h("section")],
+    ["drawer", h("aside")],
+    ["dr-ico", h("span")],
+    ["dr-title", h("b")],
+    ["dr-sub", h("span")],
+    ["dr-all", h("button")],
+    ["dr-derived", h("button", { hidden: true })],
+    ["timeline", h("div")],
+    ["tl-inner", h("div")],
+    ["jump", h("button")],
+    ["conv-toggle", h("button")],
+  ]);
+  const state = {
+    selected: "ws-sub",
+    loaded: "ws-sub",
+    groupsData: [{ group: "ws-boss", title: "主任务", label: "Codex" }],
+    chat: null,
+    ctx: null,
+    drawer: { kind: "all" },
+    convOpen: true,
+    convCollapsed: false,
+    convPeek: false,
+    scopeKey: "",
+    nodes: new Map(),
+    seenIds: new Set(),
+    expanded: new Set(),
+    unseen: 0,
+    ready: true,
+    derivedTurns: { cache: new Map(), pending: new Map() },
+  };
+  const el = {
+    boss: els.get("boss"),
+    drawer: els.get("drawer"),
+    drIco: els.get("dr-ico"),
+    drTitle: els.get("dr-title"),
+    drSub: els.get("dr-sub"),
+    drAll: els.get("dr-all"),
+    drDerived: els.get("dr-derived"),
+    tl: els.get("timeline"),
+    inner: els.get("tl-inner"),
+    jump: els.get("jump"),
+    convToggle: els.get("conv-toggle"),
+    desks: h("div"),
+    rooms: h("div"),
+    fx: h("div"),
+    deskCount: h("span"),
+    office: h("div"),
+    floor: h("div"),
+  };
+  const env = vm.createContext({
+    AN: {
+      ...context.AN,
+      h,
+      L: (zh) => zh,
+      at: Date.parse,
+      setText: context.setText,
+      setAttr: context.setAttr,
+      setClass: context.setClass,
+      reconcile: (p, nodes) => { p.children = [...nodes]; },
+      href: p => p,
+      shownName: g => g.display_title || g.title || g.group,
+      chatName: g => g.display_title || g.title || g.group,
+      deskName: d => d.model || d.key || "",
+      cliOf: d => d.provider || "",
+      cliName: p => p || "",
+      relTime: () => "刚刚",
+      clock: () => "00:10",
+      dayLabel: () => "今天",
+      fullTime: () => "2026-11-28",
+      plain: s => String(s || ""),
+      hostTile: () => h("span"),
+      art: { character: () => "c", figure: () => h("div"), head: () => h("span"), lid: () => h("span"), url: p => p, version: () => 1, canWarp: () => false },
+      pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+      MEMBER: { succeeded: ["成功", "done"], failed: ["失败", "bad"] },
+      GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+      urgent: s => s === "running" || s === "review",
+      ongoing: s => s || "idle",
+      isHidden: () => false,
+      dozing: () => false,
+      activities: () => [],
+    },
+    h,
+    L: (zh) => zh,
+    el,
+    state,
+    ART: { character: () => "c", figure: () => h("div"), head: () => h("span"), lid: () => h("span"), url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { roomMenu() {}, openMenu() {} },
+    ChatTerminal: {
+      terminalOf: () => ({ id: 77, derived: true, derived_state: "running", exit: null }),
+      derivedStateOf: x => x.derived_state,
+      isWaking: () => false,
+      reviving: () => false,
+      ofDesk: () => null,
+      showing: () => false,
+      bossOpensTerminal: () => true,
+      openDerivedOffice: (...args) => navigated.push(["openDerivedOffice", ...args]),
+    },
+    overlay: { matches: false },
+    reduceMotion: { matches: false },
+    FIG: 100,
+    FOLD_PX: 320,
+    NEAR_BOTTOM: 64,
+    GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+    pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+    urgent: s => s === "running" || s === "review",
+    activities: () => [],
+    plain: s => String(s || ""),
+    deskChar: () => "c",
+    deskName: d => d.model || d.key || "",
+    deskParts: d => ({ name: d.model || "", effort: "" }),
+    cliOf: d => d.provider || "",
+    hostTile: () => h("span"),
+    relTime: () => "刚刚",
+    clock: () => "00:10",
+    dayLabel: () => "今天",
+    fullTime: () => "2026-11-28",
+    shownName: g => g.display_title || g.title || g.group,
+    chatName: g => g.display_title || g.title || g.group,
+    setText: context.setText,
+    setAttr: context.setAttr,
+    setClass: context.setClass,
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    href: p => p,
+    go: p => navigated.push(p),
+    load: async (url) => { loadCalls.push(url); return turnsReply; },
+    openScope: (scope) => { openedScopes.push(scope); state.drawer = scope; },
+    nearBottom: () => true,
+    window: { addEventListener() {} },
+    document: { documentElement: { lang: "zh", classList: { contains: () => false } }, addEventListener() {} },
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ getPropertyValue: () => "2", columnGap: "10px", gridTemplateColumns: "1fr" }),
+    Date, Map, Set, Array, Object, JSON, Number, String, Boolean, Math, Promise, encodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, env);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-derived-turns.js`, "utf8"), env);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-messages.js`, "utf8"), env);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), env);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), env);
+
+  // 1. Derived boss mood + parent back-link (.boss-link).
+  const derivedOrigin = {
+    parent_workspace_id: "ws-boss",
+    parent_desk_key: "thread:d1",
+    parent_title: "主任务",
+    parent_label: "Codex",
+    desk: { key: "thread:d1", provider: "claude", model: "claude-opus-4-6", derived: true, status: "idle" },
+    messages: [
+      { id: "m-up-1", kind: "prompt", speaker: { role: "manager", provider: "codex", label: "Codex" }, desk: "thread:d1", thread: { kind: "desk", key: "thread:d1" }, text: "帮我查登录问题", time: "2026-11-28T00:10:00Z" },
+      { id: "m-up-2", kind: "reply", speaker: { role: "member", provider: "claude", model: "claude-opus-4-6", label: "Claude Code" }, desk: "thread:d1", thread: { kind: "desk", key: "thread:d1" }, text: "已定位原因", time: "2026-11-28T00:11:00Z", reply_to: "m-up-1" },
+    ],
+  };
+  const derivedChatNoSub = {
+    group: "drv-ws_2dboss-thread_3Ad1",
+    derived: true,
+    host: "claude",
+    label: "Claude Code",
+    title: "调试派生",
+    parent_workspace_id: "ws-boss",
+    parent_desk_key: "thread:d1",
+    derived_origin: derivedOrigin,
+    desks: [],
+    rooms: [],
+    messages: [],
+  };
+  const txt = n => n?.textContent || (n?.children || []).filter(c => typeof c === "string").join("");
+  const rec = env.createBoss();
+  env.updateBoss(rec, derivedChatNoSub, { running: 0, review: 0 });
+  assert.equal(rec.st.textContent, "工作中");
+  const backLink = rec.state.children.find(n => n?.tag === "a.boss-link");
+  assert.ok(backLink, "derived office must show .boss-link back to parent");
+  assert.equal(txt(backLink), "派生自 主任务");
+  backLink.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(navigated.at(-1), "/chat/ws-boss");
+
+  // Waiting on downstream replies takes priority over derived terminal working state.
+  env.updateBoss(rec, derivedChatNoSub, { running: 2, review: 0 });
+  assert.equal(rec.st.textContent, "等 2 个回复");
+
+  // 2. Directory with downstream tasks pins "主对话 / 派生对话" card at the top, and clicking opens { kind: "origin" }.
+  const derivedChatWithSub = {
+    ...derivedChatNoSub,
+    group: "ws-sub",
+    desks: [{ key: "d-sub", provider: "codex", model: "gpt-6.1", derived: false }],
+    messages: [
+      { id: "m-sub-1", kind: "prompt", speaker: { role: "manager", provider: "claude", label: "Claude Code" }, desk: "d-sub", thread: { kind: "desk", key: "d-sub" }, text: "写单测", time: "2026-11-28T00:15:00Z" },
+    ],
+  };
+  const subCtx = {
+    c: derivedChatWithSub,
+    desks: new Map([["d-sub", derivedChatWithSub.desks[0]]]),
+    rooms: new Map(),
+    seatDesk: new Map(),
+    sources: new Set(),
+  };
+  const dirCards = env.tpDirectory(derivedChatWithSub, subCtx);
+  assert.equal(dirCards.length, 2);
+  assert.equal(txt(dirCards[0].children[0].children[0]), "主对话");
+  assert.equal(txt(dirCards[0].children[0].children[1]), "派生对话");
+  (dirCards[0].attributes?.onclick || dirCards[0].listeners?.click || dirCards[0].onclick)();
+  assert.deepEqual(JSON.parse(JSON.stringify(openedScopes.at(-1))), { kind: "origin" });
+
+  // 3. Parent directory labels derived tasks as "派生" rather than "任务".
+  const parentChat = {
+    group: "ws-boss",
+    host: "codex",
+    label: "Codex",
+    desks: [{ key: "thread:d1", provider: "claude", model: "claude-opus-4-6", derived: true }],
+    rooms: [],
+    messages: derivedOrigin.messages,
+  };
+  const parentCtx = {
+    c: parentChat,
+    desks: new Map([["thread:d1", parentChat.desks[0]]]),
+    rooms: new Map(),
+    seatDesk: new Map(),
+    sources: new Set(),
+  };
+  const parentCards = env.tpDirectory(parentChat, parentCtx);
+  assert.equal(txt(parentCards[0].children[0].children[0]), "派生");
+
+  // 4. Requesting derived turns in origin mode hits parent workspace + deskKey and merges user turns.
+  state.chat = derivedChatNoSub;
+  state.ctx = { c: derivedChatNoSub, desks: new Map(), rooms: new Map(), seatDesk: new Map(), sources: new Set() };
+  env.renderConv = () => {};
+  env.requestDerivedTurns(derivedChatNoSub, state.ctx, "thread:d1", { workspace: "ws-boss", desk: derivedOrigin.desk, origin: true });
+  await state.derivedTurns.pending.get("ws-boss|thread:d1");
+  assert.equal(loadCalls[0], "/app/terminal/derived-turns?workspace=ws-boss&desk=thread%3Ad1");
+  const entry = env.requestDerivedTurns(derivedChatNoSub, state.ctx, "thread:d1", { workspace: "ws-boss", desk: derivedOrigin.desk, origin: true });
+  const merged = env.mergeDerivedMessages(
+    derivedOrigin.messages,
+    env.buildDerivedUserMessages(derivedChatNoSub, derivedOrigin.desk, "thread:d1", entry.turns),
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(merged.map(m => m.text))),
+    ["帮我查登录问题", "已定位原因", "派生里我追问一下", "派生终端回复"],
+  );
+
+  // 5. Idle derived terminal with running/review child workspace reports running/review wording in boss-side.
+  const sideState = { chat: { group: "ws-boss" } };
+  const sideCtx = vm.createContext({
+    AN: { L: (zh) => zh, at: (s) => Date.parse(s) || 0, relTime: () => "刚刚", deskName: (d) => d.model || "", cliOf: (d) => d.provider || "", cliName: (p) => p, shownName: (g) => g.title || "" },
+    state: sideState,
+    ChatTerminal: {
+      ofDesk: () => null,
+      derivedOf: () => [
+        { group: "ws-child-run", desk_key: "thread:d-run", title: "派生跑子任务", child_status: "running", updated: "2026-11-28T00:05:00Z" },
+        { group: "ws-child-rev", desk_key: "thread:d-rev", title: "派生待审核", child_status: "review", updated: "2026-11-28T00:04:00Z" },
+      ],
+      derivedStateOf: () => "idle",
+      isWaking: () => false,
+      reviving: () => false,
+    },
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, sideCtx);
+  const sideRows = sideCtx.ChatDerived.sideItems({
+    group: "ws-boss",
+    desks: [
+      { key: "thread:d-run", provider: "claude", model: "claude-opus-4-6", derived: true, last_active: "2026-11-28T00:05:00Z" },
+      { key: "thread:d-rev", provider: "codex", model: "gpt-5.4", derived: true, last_active: "2026-11-28T00:04:00Z" },
+    ],
+  });
+  const byId = Object.fromEntries(sideRows.map((r) => [r.id, r]));
+  assert.equal(byId["thread:d-run"].tone, "run");
+  assert.equal(byId["thread:d-run"].sub.startsWith("运行中"), true);
+  assert.equal(byId["thread:d-rev"].tone, "review");
+  assert.equal(byId["thread:d-rev"].sub.startsWith("待审核"), true);
+});
+
+test("partitionNested prevents pending-handover parent collision and keeps N:1 secondary child workspaces top-level", () => {
+  const { context } = auditUI();
+  const baseH = context.h;
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    const node = baseH(tag);
+    node.closest = () => null;
+    node.classList = {
+      add: (...ks) => ks.forEach((k) => set.add(k)),
+      remove: (...ks) => ks.forEach((k) => set.delete(k)),
+      toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+      contains: (k) => set.has(k),
+    };
+    return node;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = baseH(tag, attrs, ...kids);
+    const set = new Set();
+    n.classList = {
+      add: (...ks) => ks.forEach((k) => set.add(k)),
+      remove: (...ks) => ks.forEach((k) => set.delete(k)),
+      toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+      contains: (k) => set.has(k),
+    };
+    return n;
+  };
+  const env = vm.createContext({
+    AN: {
+      ...context.AN,
+      h,
+      L: (zh) => zh,
+      $: () => makeNode(),
+      at: (s) => Date.parse(s) || 0,
+      setText: context.setText,
+      setAttr: context.setAttr,
+      setClass: (n, cls) => { n.className = cls; },
+      reconcile: (p, nodes) => { p.children = [...nodes]; },
+      href: (p) => p,
+      shownName: (g) => g.title || g.group,
+      chatName: (g) => g.title || g.group,
+      colorClass: () => "c0",
+      hostTile: () => h("span"),
+      pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+      GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+      urgent: (s) => s === "running" || s === "review",
+      ongoing: (s) => s || "idle",
+      cliName: (p) => p,
+      stored: () => null,
+      store: () => {},
+    },
+    h,
+    $: () => makeNode(),
+    L: (zh) => zh,
+    setText: context.setText,
+    setAttr: context.setAttr,
+    setClass: (n, cls) => { n.className = cls; },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    href: (p) => p,
+    go: () => {},
+    shownName: (g) => g.title || g.group,
+    chatName: (g) => g.title || g.group,
+    colorClass: () => "c0",
+    hostTile: () => h("span"),
+    pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+    GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+    urgent: (s) => s === "running" || s === "review",
+    stored: () => null,
+    store: () => {},
+    Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
+    ChatGroups: {
+      handover: ":handover",
+      caps: { groups: 10, items: 10, groupStep: 5, itemStep: 5 },
+      defaultPrefs: { view: "project" },
+      arrange: (groups) => {
+        const pending = groups.filter((g) => g.handover === "pending");
+        const normal = groups.filter((g) => g.handover !== "pending");
+        const sections = [];
+        if (pending.length) sections.push({ key: ":handover", title: "待接手", pinned: true, items: pending });
+        if (normal.length) sections.push({ key: "/proj", title: "proj", pinned: false, items: normal });
+        return sections;
+      },
+      capSections: (sections) => ({
+        sections: sections.map((s) => ({ ...s, shown: s.items, hidden: 0 })),
+        hiddenGroups: 0,
+      }),
+    },
+    window: { Avatars: { custom: () => null }, matchMedia: () => ({ matches: false, addEventListener() {} }), addEventListener() {} },
+    document: { documentElement: { lang: "zh" }, addEventListener() {} },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state;`, env);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, env);
+  // Provide minimal ChatTerminal stub backed by ChatDerived for partitionNested & groupedNodes.
+  const derivedByParent = {
+    "ws-pending": [
+      { group: "ws-child-pending", derived: true, parent_workspace_id: "ws-pending", desk_key: "thread:d-pend", child_workspace_id: "ws-child-pending", host: "claude", label: "Claude", title: "派生待交接", status: "idle" },
+    ],
+    "ws-n1": [
+      { group: "ws-child-primary", derived: true, parent_workspace_id: "ws-n1", desk_key: "thread:d-n1", child_workspace_id: "ws-child-primary", host: "claude", label: "Claude", title: "主子工作区", status: "idle" },
+    ],
+  };
+  env.ChatTerminal = {
+    derivedOf: (p) => derivedByParent[p] || [],
+    derivedChildrenOf: (p) => (p === "ws-n1" ? [{ group: "ws-child-primary" }, { group: "ws-child-secondary" }] : []),
+    derivedAll: () => Object.values(derivedByParent).flat(),
+    derivedMeta: () => ({ text: "空闲", tone: "idle" }),
+    derivedSummary: () => null,
+    rowPath: (g) => `/chat/${g.group}`,
+    decorate: () => {},
+    headAction: () => {},
+    menu: () => false,
+  };
+  const groups = [
+    { group: "ws-pending", title: "待交接父", host: "codex", label: "Codex", handover: "pending", status: "idle", updated: "2026-11-28T00:05:00Z" },
+    { group: "ws-child-pending", title: "待交接父的子", host: "claude", label: "Claude", parent_workspace_id: "ws-pending", parent_desk_key: "thread:d-pend", status: "idle", updated: "2026-11-28T00:04:00Z" },
+    { group: "ws-n1", title: "N1父", host: "codex", label: "Codex", status: "idle", updated: "2026-11-28T00:03:00Z" },
+    { group: "ws-child-primary", title: "主子工作区", host: "claude", label: "Claude", parent_workspace_id: "ws-n1", parent_desk_key: "thread:d-n1", status: "idle", updated: "2026-11-28T00:02:00Z" },
+    { group: "ws-child-secondary", title: "次要子工作区", host: "claude", label: "Claude", parent_workspace_id: "ws-n1", parent_desk_key: "thread:d-n1", status: "idle", updated: "2026-11-28T00:01:00Z" },
+  ];
+  env.state.groupsData = groups;
+  const { topGroups } = env.partitionNested(groups);
+  const topIds = topGroups.map((g) => g.group);
+  assert.deepEqual(topIds, ["ws-pending", "ws-n1", "ws-child-secondary"]);
+
+  env.groupedNodes(groups, { prefs: { view: "project" }, query: "" });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(env.state.order)),
+    ["ws-pending", "ws-child-pending", "ws-n1", "ws-child-primary", "ws-child-secondary"],
+  );
+  assert.equal(new Set(env.state.order).size, env.state.order.length, "state.order must have no duplicate ids");
+});
+
+test("merged derived row context menu keeps terminal actions plus child workspace rename/handover/delete while disabling pin and batch pick", async () => {
+  const menus = [];
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    return {
+      tag,
+      children: [],
+      dataset: {},
+      style: {},
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      attributes: {},
+      classList: {
+        add: (...ks) => ks.forEach((k) => set.add(k)),
+        remove: (...ks) => ks.forEach((k) => set.delete(k)),
+        toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+        contains: (k) => set.has(k),
+      },
+      append(...xs) { this.children.push(...xs); },
+      after() {},
+      before() {},
+      replaceChildren(...xs) { this.children = xs; },
+      setAttribute(k, v) { this.attributes[k] = v; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ width: 100, height: 100 }),
+      contains: () => false,
+    };
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeNode(tag);
+    Object.assign(n, attrs);
+    n.children = kids.flat(Infinity).filter((x) => x != null && x !== false);
+    if (kids.length === 1 && typeof kids[0] === "string") n.textContent = kids[0];
+    return n;
+  };
+  const posted = [];
+  const AN = {
+    h,
+    $: () => null,
+    L: (zh) => zh,
+    at: (s) => Date.parse(s) || 0,
+    load: async (url) => {
+      if (url.startsWith("/app/terminal/state")) {
+        return {
+          sessions: [
+            { id: 88, provider: "claude", derived: true, derived_state: "idle", parent_workspace_id: "ws-boss", desk_key: "thread:d-sub", exit: null, workspaces: [] },
+          ],
+          derived_titles: {},
+          cwd: "/repo",
+        };
+      }
+      return {};
+    },
+    post: async (path, body) => { posted.push([path, body]); return {}; },
+    chatName: (g) => g.title || g.group,
+    urgent: () => false,
+    cliName: (p) => p,
+    hostTile: () => h("span"),
+    deskName: (d) => d.model || "",
+    handleOf: () => "",
+    onVisibility: () => {},
+    isHidden: () => false,
+    href: (p) => p,
+  };
+  const state = {
+    selected: "ws-boss",
+    loaded: "ws-boss",
+    order: ["ws-boss", "ws-child"],
+    groupsData: [
+      {
+        group: "ws-boss",
+        title: "主任务",
+        host: "codex",
+        label: "Codex",
+        status: "idle",
+        updated: "2026-11-28T00:05:00Z",
+        derived: [
+          { key: "thread:d-sub", provider: "claude", model: "claude-opus-4-6", child_workspace_id: "ws-child", last_active: "2026-11-28T00:05:00Z" },
+          { key: "thread:d-plain", provider: "codex", model: "gpt-6.1", child_workspace_id: null, last_active: "2026-11-28T00:04:00Z" },
+        ],
+      },
+      {
+        group: "ws-child",
+        title: "派生子工作区",
+        title_id: "conv-child-1",
+        host: "claude",
+        label: "Claude Code",
+        parent_workspace_id: "ws-boss",
+        parent_desk_key: "thread:d-sub",
+        status: "idle",
+        updated: "2026-11-28T00:05:00Z",
+      },
+    ],
+    drawer: { kind: "all" },
+    convOpen: false,
+  };
+  const ctx = vm.createContext({
+    AN,
+    state,
+    el: {
+      app: makeNode("div"),
+      drawer: makeNode("aside"),
+      drAll: makeNode("button"),
+      drDerived: makeNode("button"),
+      drIco: makeNode("span"),
+      drTitle: makeNode("b"),
+      drSub: makeNode("span"),
+      tl: makeNode("div"),
+    },
+    setText: (n, s) => { n.textContent = s; },
+    setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+    go: () => {},
+    refresh: () => {},
+    renderList: () => {},
+    openScope: () => {},
+    addEventListener() {},
+    document: { body: makeNode("body"), documentElement: { dataset: {} }, addEventListener() {}, activeElement: null },
+    window: { addEventListener() {} },
+    innerWidth: 1200,
+    innerHeight: 800,
+    location: { origin: "http://localhost" },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, Promise, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, ctx);
+  ctx.Actions.openMenu = (_e, items) => menus.push(items.map((x) => x.label));
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, ctx);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, ctx);
+  await ctx.ChatTerminal.refresh();
+
+  // Merged child workspace row gets terminal items + child workspace management items.
+  assert.equal(ctx.ChatTerminal.menu("ws-child", { preventDefault() {}, stopPropagation() {} }), true);
+  assert.deepEqual([...menus.at(-1)], ["打开", "关闭终端", "改名…", "交给其他 boss 接手…", "删除 agent…"]);
+
+  // Pure placeholder drv-... row (no child_workspace_id) keeps only terminal items.
+  const plainId = ctx.ChatTerminal.derivedRowId("ws-boss", "thread:d-plain");
+  assert.equal(ctx.ChatTerminal.menu(plainId, { preventDefault() {}, stopPropagation() {} }), true);
+  assert.deepEqual([...menus.at(-1)], ["打开", "续接"]);
+
+  // Merged derived row still disables pinGroup and multi-select pick.
+  await ctx.Actions.pinGroup("ws-child", true);
+  assert.equal(posted.length, 0);
+  assert.equal(ctx.Actions.pick("ws-child", { metaKey: true }), false);
+  assert.equal(ctx.Actions.picked.size, 0);
+});
+
+test("follow preserves overlay drawer via openOnce on derived route upgrades and recentlyActive falls back to derived updated", async () => {
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    return {
+      tag,
+      children: [],
+      dataset: {},
+      style: {},
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      attributes: {},
+      classList: {
+        add: (...ks) => ks.forEach((k) => set.add(k)),
+        remove: (...ks) => ks.forEach((k) => set.delete(k)),
+        toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+        contains: (k) => set.has(k),
+      },
+      append(...xs) { this.children.push(...xs); },
+      after() {},
+      before() {},
+      replaceChildren(...xs) { this.children = xs; },
+      setAttribute(k, v) { this.attributes[k] = v; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener() {},
+      remove() {},
+      focus() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeNode(tag);
+    Object.assign(n, attrs);
+    n.children = kids.flat(Infinity).filter((x) => x != null && x !== false);
+    if (kids.length === 1 && typeof kids[0] === "string") n.textContent = kids[0];
+    return n;
+  };
+  let sessions = [
+    { id: 51, provider: "claude", derived: true, derived_state: "running", parent_workspace_id: "ws-boss", desk_key: "thread:d1", exit: null, workspaces: [] },
+  ];
+  const nowIso = new Date(Date.now() - 30_000).toISOString();
+  const state = {
+    selected: "term-51",
+    loaded: "term-51",
+    convOpen: true,
+    drawer: { kind: "all" },
+    groupsData: [
+      {
+        group: "ws-boss",
+        title: "主任务",
+        host: "codex",
+        label: "Codex",
+        status: "idle",
+        updated: nowIso,
+        derived: [{ key: "thread:d1", provider: "claude", model: "claude-opus-4-6", last_active: nowIso }],
+      },
+    ],
+  };
+  const ctx = vm.createContext({
+    AN: {
+      h,
+      L: (zh) => zh,
+      at: (s) => Date.parse(s) || 0,
+      SLEEP_AFTER: 30 * 60 * 1000,
+      load: async () => ({ sessions, derived_titles: {}, cwd: "/repo" }),
+      cliName: (p) => p,
+      hostTile: () => h("span"),
+      deskName: (d) => d.model || "",
+      handleOf: () => "",
+      onVisibility: () => {},
+      isHidden: () => false,
+      href: (p) => p,
+    },
+    state,
+    el: {
+      app: makeNode("div"),
+      drawer: makeNode("aside"),
+      drAll: makeNode("button"),
+      drDerived: makeNode("button"),
+      drIco: makeNode("span"),
+      drTitle: makeNode("b"),
+      drSub: makeNode("span"),
+      tl: makeNode("div"),
+      boss: makeNode("section"),
+      desks: makeNode("div"),
+      rooms: makeNode("div"),
+      fx: makeNode("div"),
+      floor: makeNode("div"),
+    },
+    h,
+    L: (zh) => zh,
+    ART: { character: () => "c", figure: () => h("div"), head: () => h("span"), lid: () => h("span"), url: (p) => p },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { openMenu() {}, roomMenu() {} },
+    setText: (n, s) => { n.textContent = s; },
+    setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+    setClass: (n, c) => { n.className = c; },
+    go: () => {},
+    href: (p) => p,
+    addEventListener() {},
+    requestAnimationFrame: (fn) => fn(),
+    ResizeObserver: class { observe() {} },
+    window: { addEventListener() {} },
+    document: { documentElement: { dataset: {}, lang: "zh" }, addEventListener() {} },
+    location: { origin: "http://localhost" },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, Promise, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, ctx);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, ctx);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), ctx);
+  await ctx.ChatTerminal.refresh();
+
+  // 1. term-51 -> drv-... while narrow overlay drawer is open sets openOnce.
+  const drvId = ctx.ChatTerminal.derivedRowId("ws-boss", "thread:d1");
+  assert.equal(ctx.ChatTerminal.follow("term-51"), drvId);
+  assert.equal(ctx.ChatTerminal.consumeOpen(drvId), true);
+
+  // 2. drv-... -> child_workspace_id while convOpen is true sets openOnce.
+  state.groupsData[0].derived[0].child_workspace_id = "ws-sub-1";
+  state.groupsData.push({
+    group: "ws-sub-1",
+    title: "子工作区",
+    host: "claude",
+    label: "Claude",
+    parent_workspace_id: "ws-boss",
+    parent_desk_key: "thread:d1",
+    status: "running",
+    updated: nowIso,
+  });
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), true);
+
+  // 3. When drawer is closed (narrow overlay) or folded (wide), follow does NOT force openOnce even if .term-mode is set.
+  ctx.el.drawer.classList.add("term-mode");
+  state.convOpen = false;
+  ctx.el.drawer.hidden = true;
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), false);
+  ctx.el.drawer.hidden = false;
+  ctx.el.drawer.classList.add("folded");
+  state.convCollapsed = true;
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), false);
+  ctx.el.drawer.classList.remove("folded");
+  ctx.el.drawer.classList.remove("term-mode");
+  state.convCollapsed = false;
+
+  // 3b. Merged derived row prefers child workspace display_title (e.g. custom rename) to match decorateDerivedOffice.
+  state.groupsData[1].display_title = "自定义子名称";
+  const merged = ctx.ChatTerminal.derivedOf("ws-boss").find((d) => d.group === "ws-sub-1");
+  assert.equal(merged?.display_title, "自定义子名称");
+  assert.equal(merged?.title, "自定义子名称");
+
+  // 4. recentlyActive falls back to c.updated and ChatTerminal.findDerivedRow(c.group)?.updated for drv-... not in groupsData.
+  assert.equal(ctx.recentlyActive({ group: drvId, updated: nowIso }), true);
+  assert.equal(ctx.recentlyActive({ group: drvId, updated: "2020-01-01T00:00:00Z" }), false);
+  // Without c.updated, falls back to derived row's updated.
+  delete state.groupsData[0].derived[0].child_workspace_id;
+  state.groupsData.pop();
+  assert.equal(ctx.recentlyActive({ group: drvId }), true);
 });

@@ -1397,6 +1397,64 @@ All checks passed!
     if (path === "/app/git-pr/state") return mockGitPr();
     if (path === "/app/isolated/cleanup" && q.has("isolated")) return mockCleanup();
     if (path === "/app/isolated/cleanup") return { running: false, report: null, recent: [] };
+    if (path.split("?")[0] === "/app/derived") {
+      const params = new URLSearchParams(path.split("?")[1] || "");
+      const ws = params.get("workspace") || "";
+      const deskKey = params.get("desk") || "";
+      const parent = chat(ws);
+      const desk = parent?.desks?.find((d) => d.key === deskKey && d.derived);
+      if (!parent || !desk) throw Object.assign(new Error("404"), { status: 404 });
+      const messages = (parent.messages || []).filter((m) => m.desk === deskKey || (m.thread?.kind === "desk" && m.thread?.key === deskKey));
+      const enc = (s) => encodeURIComponent(String(s)).replace(/[_!~*'().-]|%([0-9A-F]{2})/gi, (m, hex) => `_${hex || m.charCodeAt(0).toString(16).padStart(2, "0")}`);
+      const derivedId = typeof ChatTerminal !== "undefined" && ChatTerminal.derivedRowId
+        ? ChatTerminal.derivedRowId(ws, deskKey)
+        : typeof ChatDerived !== "undefined" && ChatDerived.derivedRowId
+          ? ChatDerived.derivedRowId(ws, deskKey)
+          : `drv-${enc(ws)}-${enc(deskKey)}`;
+      return {
+        group: derivedId,
+        derived: true,
+        host: desk.provider,
+        app: null,
+        label: desk.provider,
+        cli_session: true,
+        title: desk.model || desk.provider,
+        display_title: null,
+        cli_title: null,
+        cli_title_custom: false,
+        boss_art_model: desk.art_model || desk.model || "",
+        project: parent.project,
+        project_key: parent.project_key,
+        project_label: parent.project_label,
+        project_path: parent.project_path,
+        color: 0,
+        live: desk.status === "running",
+        status: desk.status || "idle",
+        updated: desk.last_active || parent.updated || "",
+        isolated_count: 0,
+        boss_key: `${desk.provider}|${desk.provider}`,
+        parent_workspace_id: ws,
+        parent_desk_key: deskKey,
+        derived_origin: {
+          parent_workspace_id: ws,
+          parent_desk_key: deskKey,
+          parent_title: parent.display_title || parent.title,
+          parent_label: parent.label,
+          desk,
+          messages,
+        },
+        conversations: [],
+        members: [],
+        isolated: [],
+        desks: [],
+        optimized: { count: 0, desks: [] },
+        rooms: [],
+        messages: [],
+        boss_messages: [],
+        omitted: 0,
+        threads: [],
+      };
+    }
     if (path.split("?")[0] === "/app/terminal/state") return {
       sessions: structuredClone(mockTerminals),
       cwd: "/work/app",

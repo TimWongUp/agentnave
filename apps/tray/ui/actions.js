@@ -67,7 +67,9 @@ const Actions = {};
   });
 
   const isDerivedRow = (id) =>
-    String(id).startsWith("term-") || (typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.isDerivedRowId?.(id)));
+    String(id).startsWith("term-") ||
+    (typeof ChatTerminal !== "undefined" &&
+      (Boolean(ChatTerminal?.isDerivedRowId?.(id)) || Boolean(ChatTerminal?.findDerivedRow?.(id))));
 
   // ---- picking several workspaces ----------------------------------------------------------
   function clearPicks() {
@@ -731,6 +733,22 @@ const Actions = {};
   }
 
   // ---- menus ------------------------------------------------------------------------------
+  function workspaceRenameItem(g) {
+    return g?.title_id ? { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) } : null;
+  }
+  function workspaceLifecycleItems(id, g) {
+    if (!g) return [];
+    return [
+      g.handover === "pending"
+        ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
+        : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
+      { label: L("删除 agent…", "Delete agent…"), danger: true, run: () => removeGroups([id]) },
+    ].filter(Boolean);
+  }
+  function workspaceManageItems(id, g = state.groupsData.find((x) => x.group === id)) {
+    if (!g) return [];
+    return [workspaceRenameItem(g), ...workspaceLifecycleItems(id, g)].filter(Boolean);
+  }
   function workspaceMenu(id, e) {
     if (isDerivedRow(id)) return;
     if (picked.size && !picked.has(id)) clearPicks();
@@ -752,17 +770,14 @@ const Actions = {};
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },
-      g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) },
+      workspaceRenameItem(g),
       endedTerm && { label: L("关闭终端", "Close terminal"), run: () => ChatTerminal.close(endedTerm.id) },
       derivedCount > 0 && {
         label: L(`关闭全部派生终端（${derivedCount}）`, `Close all derived terminals (${derivedCount})`),
         danger: true,
         run: () => ChatTerminal.closeDerived(id),
       },
-      g.handover === "pending"
-        ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
-        : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
-      { label: L("删除 agent…", "Delete agent…"), danger: true, run: () => removeGroups([id]) },
+      ...workspaceLifecycleItems(id, g),
     ].filter(Boolean));
   }
   function projectMenu(section, e) {
@@ -790,5 +805,5 @@ const Actions = {};
   $("cleanup")?.addEventListener("click", cleanup);
   $("add-project")?.addEventListener("click", addProject);
 
-  Object.assign(Actions, { picked, pick, ask, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say, cleanup, pinProject, pinGroup, reorderProjects, renameProject });
+  Object.assign(Actions, { picked, pick, ask, workspaceManageItems, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say, cleanup, pinProject, pinGroup, reorderProjects, renameProject });
 }

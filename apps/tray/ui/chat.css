@@ -91,8 +91,11 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi:hover { background: var(--hover); }
 .gi.kbd-active:not(.on):not(.picked) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .gi.on { background: color-mix(in srgb, var(--ink) 7%, transparent); }
-.gi.gi-child { margin-left: 16px; min-height: 38px; padding: 4px 10px 4px 14px; }
-.gi.gi-child.gi-grandchild { margin-left: 30px; min-height: 36px; }
+.gi.gi-child { margin-left: 34px; min-height: 38px; padding: 4px 10px 4px 8px; content-visibility: visible; --tree-line: color-mix(in srgb, var(--ink) 20%, var(--bg)); }
+.gi.gi-child::before { left: -12px; top: calc(50% - 6px); bottom: -2px; width: 1.5px; border-radius: 0; background: var(--tree-line); opacity: 0; pointer-events: none; }
+.gi.gi-child:not(.gi-child-last)::before { opacity: 1; }
+.gi.gi-child::after { content: ""; position: absolute; left: -12px; top: -1px; width: 10px; height: calc(50% + 1px); border-left: 1.5px solid var(--tree-line); border-bottom: 1.5px solid var(--tree-line); border-bottom-left-radius: 6px; box-sizing: border-box; pointer-events: none; }
+.gi.gi-child.gi-child-first::after { top: -6px; height: calc(50% + 6px); }
 .gi.gi-child .gi-host { width: 24px; height: 24px; }
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
@@ -160,6 +163,9 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side="off"] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side="off"] .gi { justify-content: flex-start; padding: 5px 10px; }
   .app[data-side="off"] .gi::before { left: 2px; }
+  .app[data-side="off"] .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .app[data-side="off"] .gi.gi-child::before { content: ""; left: -12px; }
+  .app[data-side="off"] .gi.gi-child::after { content: ""; }
 }
 @media not all and (max-width: 920px) {
   .app:has(> .conv.folded) { --conv-col: 0px; }
@@ -180,6 +186,7 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi.gi-child { margin-left: 0; padding: 7px 0; }
+  .gi.gi-child::before, .gi.gi-child::after { content: none; }
   /* the rail shows every group's entries, so the way to the rest stays, as a dot row */
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
   .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
@@ -197,8 +204,9 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side-peek] .gl-more::after { content: none; }
   .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
-  .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
-  .app[data-side-peek] .gi.gi-child.gi-grandchild { margin-left: 30px; }
+  .app[data-side-peek] .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .app[data-side-peek] .gi.gi-child::before { content: ""; left: -12px; }
+  .app[data-side-peek] .gi.gi-child::after { content: ""; }
 }
 
 /* ---- floor ---- */
@@ -226,6 +234,7 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 .zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--muted); }
 .zone-h .r { margin-left: auto; letter-spacing: 0; font-weight: 550; }
 .zone-h .r.run { color: var(--run); }
+.boss-zone .zone-h { white-space: nowrap; }
 .boss-zone .zone-h .r { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .boss-all { flex: none; display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11.5px; font-weight: 550; letter-spacing: 0; white-space: nowrap; cursor: pointer; }
 .boss-all:hover { color: var(--ink); }
@@ -245,6 +254,11 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 .boss-mid { min-width: max-content; }
 .boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 2px 0 2px 20px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; cursor: default; }
 .boss-side[hidden] { display: none; }
+.boss-side .side-sec { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.boss-side .side-sec[hidden] { display: none; }
+.boss-side.both { gap: 8px; }
+.boss-side.both .side-sec + .side-sec { padding-top: 8px; border-top: 1px solid var(--line); }
+.boss-side.both .side-rows { max-height: calc(46px * 2 + 2px); }
 .boss-row:has(> .boss-side[hidden]) { grid-template-columns: auto; }
 /* chat-office.js stacks the meetings under the boss when beside it the boss would have to shrink */
 .boss-row.stack { grid-template-columns: minmax(0, 1fr); justify-items: center; }
@@ -556,9 +570,10 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 /* ---- meetings beside the boss ---- */
 .td-h { display: flex; align-items: center; gap: 5px; margin: 0 0 2px; padding: 0 6px; font-size: 11px; font-weight: 650; color: var(--muted); }
 .td-h b { font-weight: 650; color: var(--faint); }
-.td-row.run .td-sub { color: var(--run); } .td-row.bad .td-sub { color: var(--bad); }
+.td-row.run .td-sub { color: var(--run); } .td-row.review .td-sub { color: var(--review); } .td-row.bad .td-sub { color: var(--bad); }
 .td-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 5px 6px; border: 0; border-radius: 9px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .td-row:hover { background: var(--card-hover); }
+.td-row.sel { background: var(--card-hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .td-heads { flex: none; display: flex; padding-right: 7px; }
 .td-heads .head { width: 24px; height: 24px; margin-right: -7px; border-radius: 27%; background: var(--surface) center / cover; box-shadow: 0 0 0 2px var(--surface); }
 .td-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -645,8 +660,10 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .dr-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dr-title { font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dr-sub { min-height: 18px; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dr-all { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-.dr-all:hover { color: var(--ink); background: var(--card-hover); }
+.dr-all, .dr-derived { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.dr-all:hover, .dr-derived:hover { color: var(--ink); background: var(--card-hover); }
+.dr-derived { color: var(--accent); }
+.dr-derived[hidden] { display: none; }
 .dr-close { display: none; flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
 .dr-close:hover { background: var(--card-hover); color: var(--ink); }
 .dr-empty { padding: 40px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
@@ -756,6 +773,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi.gi-child { margin-left: 0; padding: 7px 0; }
+  .gi.gi-child::before, .gi.gi-child::after { content: none; }
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
   .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
   .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(760px, calc(100vw - 64px)); box-shadow: 0 22px 60px #0009; }
@@ -769,8 +787,9 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more::after { content: none; }
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 5px 10px; }
-  .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
-  .gi.gi-child.gi-grandchild { margin-left: 30px; }
+  .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .gi.gi-child::before { content: ""; left: -12px; }
+  .gi.gi-child::after { content: ""; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }

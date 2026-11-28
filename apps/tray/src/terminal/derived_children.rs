@@ -69,6 +69,7 @@ impl Terminals {
                 "id": live.id,
                 "parent_workspace_id": derived.parent_workspace_id,
                 "desk_key": desk_key,
+                "child_workspace_id": workspace,
             }
         }));
         resp.status = 409;

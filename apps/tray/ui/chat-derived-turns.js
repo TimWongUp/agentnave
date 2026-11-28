@@ -22,11 +22,12 @@ function isDerivedDeskView(c, ctx, deskKey) {
   );
 }
 // What a desk's cached turns were read for; a change in it reads them again.
-function derivedTurnsVersionKey(c, ctx, deskKey) {
-  const desk = ctx?.desks?.get?.(deskKey);
-  const term = typeof ChatTerminal !== "undefined" ? ChatTerminal?.ofDesk?.(c.group, deskKey) : null;
+function derivedTurnsVersionKey(c, ctx, deskKey, opts = null) {
+  const workspace = opts?.workspace || c.group;
+  const desk = opts?.desk || ctx?.desks?.get?.(deskKey);
+  const term = typeof ChatTerminal !== "undefined" ? ChatTerminal?.ofDesk?.(workspace, deskKey) : null;
   return JSON.stringify([
-    c.group,
+    workspace,
     deskKey,
     desk?.private?.tasks ?? 0,
     desk?.status ?? "",
@@ -38,14 +39,15 @@ function refreshDerivedTurns(group, deskKey) {
   const entry = state.derivedTurns?.cache.get(`${group}|${deskKey}`);
   if (entry) entry.stale = true;
 }
-function requestDerivedTurns(c, ctx, deskKey) {
+function requestDerivedTurns(c, ctx, deskKey, opts = null) {
   if (typeof load !== "function" || !state.derivedTurns) return null;
-  const cacheId = `${c.group}|${deskKey}`;
-  const versionKey = derivedTurnsVersionKey(c, ctx, deskKey);
+  const workspace = opts?.workspace || c.group;
+  const cacheId = `${workspace}|${deskKey}`;
+  const versionKey = derivedTurnsVersionKey(c, ctx, deskKey, opts);
   const entry = state.derivedTurns.cache.get(cacheId) || null;
   if ((!entry || entry.stale || entry.versionKey !== versionKey) && !state.derivedTurns.pending.has(cacheId)) {
     const req = load(
-      `/app/terminal/derived-turns?workspace=${encodeURIComponent(c.group)}&desk=${encodeURIComponent(deskKey)}`,
+      `/app/terminal/derived-turns?workspace=${encodeURIComponent(workspace)}&desk=${encodeURIComponent(deskKey)}`,
     )
       .then((res) => {
         state.derivedTurns.cache.set(cacheId, {
@@ -63,7 +65,12 @@ function requestDerivedTurns(c, ctx, deskKey) {
       })
       .finally(() => {
         state.derivedTurns.pending.delete(cacheId);
-        if (state.chat?.group === c.group && state.drawer?.kind === "desk" && state.drawer.key === deskKey) {
+        const sameChat = state.chat?.group === c.group;
+        const onDesk = state.drawer?.kind === "desk" && state.drawer.key === deskKey;
+        const onOrigin =
+          state.drawer?.kind === "origin" ||
+          (state.drawer?.kind === "all" && typeof ChatDerived !== "undefined" && ChatDerived.isOffice?.(state.chat));
+        if (sameChat && (onDesk || (opts?.origin && onOrigin))) {
           renderConv(state.chat, state.ctx);
         }
       });

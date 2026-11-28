@@ -520,8 +520,19 @@ pub(crate) struct Places<'a> {
     pub renamed: &'a BTreeSet<String>,
 }
 
-pub(crate) use children::{DerivedHierarchy, read_hierarchy};
+pub(crate) use children::{DerivedHierarchy, read_hierarchy, requested_derived};
 pub(crate) use origin::origin_cwds;
+
+/// Single workspace ID whose snapshots determine the answer for `/app/chats/:id` or `/app/derived`.
+pub(crate) fn watched_group(path: &str) -> Option<String> {
+    if let Some(group) = requested_group(path) {
+        return Some(group.to_owned());
+    }
+    match requested_derived(path) {
+        Some(Ok((parent_ws, _))) => Some(parent_ws),
+        _ => None,
+    }
+}
 
 /// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
 #[cfg(test)]
@@ -557,6 +568,18 @@ pub(crate) fn respond_with(
     places: &Places,
     hierarchy: Option<&DerivedHierarchy>,
 ) -> Response {
+    if let Some(derived_req) = requested_derived(path) {
+        let (parent_ws, desk_key) = match derived_req {
+            Ok(pair) => pair,
+            Err(message) => return Response::error(400, message),
+        };
+        let (mut groups, _) = unprojected_groups(&mut snapshots, handovers, apps, places);
+        let Some(parent) = groups.iter_mut().find(|g| g.id == parent_ws) else {
+            return Response::error(404, "not found");
+        };
+        parent.project(&snapshots, true);
+        return children::derived_office_response(parent, &desk_key, hierarchy);
+    }
     let requested = path.strip_prefix("/app/chats/");
     let complete = requested.is_some_and(|path| path.ends_with("/history"));
     let requested = requested.map(|path| path.strip_suffix("/history").unwrap_or(path));
@@ -572,34 +595,49 @@ pub(crate) fn respond_with(
     }
     let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps, places);
     if let Some(id) = requested {
-        let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
+        let Some(index) = groups.iter().position(|g| g.id == id) else {
             return Response::error(404, "not found");
         };
-        if focus.is_some_and(|id| !group.conversations.iter().any(|c| c["id"] == id)) {
-            return Response::error(404, "not found");
-        }
-        group.project(&snapshots, true);
-        let host = group.host.clone();
-        let mut value = group.header();
-        value.as_object_mut().unwrap().remove("updated");
-        value["conversations"] = json!(group.conversations);
-        value["members"] = json!(group.members());
-        value["isolated"] = json!(group.isolated);
-        let rooms = group.rooms();
-        let messages = group.timeline(focus, complete);
-        let omitted = (group.messages.len() + group.typing.len()).saturating_sub(messages.len());
-        let referenced = referenced_desks(&rooms, &messages);
-        let (desks, optimized) =
-            group.desks(host.as_deref(), limit, false, OPTIMIZED_LISTED, &referenced);
-        value["desks"] = json!(desks);
-        value["optimized"] = optimized;
-        value["rooms"] = json!(rooms);
-        value["messages"] = json!(messages);
-        value["boss_messages"] = json!(group.boss_messages());
-        value["omitted"] = json!(omitted);
-        value["threads"] = json!(group.threads());
+        let mut value = {
+            let group = &mut groups[index];
+            if focus.is_some_and(|id| !group.conversations.iter().any(|c| c["id"] == id)) {
+                return Response::error(404, "not found");
+            }
+            group.project(&snapshots, true);
+            let host = group.host.clone();
+            let mut value = group.header();
+            value.as_object_mut().unwrap().remove("updated");
+            value["conversations"] = json!(group.conversations);
+            value["members"] = json!(group.members());
+            value["isolated"] = json!(group.isolated);
+            let rooms = group.rooms();
+            let messages = group.timeline(focus, complete);
+            let omitted =
+                (group.messages.len() + group.typing.len()).saturating_sub(messages.len());
+            let referenced = referenced_desks(&rooms, &messages);
+            let (desks, optimized) =
+                group.desks(host.as_deref(), limit, false, OPTIMIZED_LISTED, &referenced);
+            value["desks"] = json!(desks);
+            value["optimized"] = optimized;
+            value["rooms"] = json!(rooms);
+            value["messages"] = json!(messages);
+            value["boss_messages"] = json!(group.boss_messages());
+            value["omitted"] = json!(omitted);
+            value["threads"] = json!(group.threads());
+            value
+        };
         if let Some(hierarchy) = hierarchy {
             children::enrich_requested_group(&mut value, id, hierarchy);
+            if let (Some(parent_ws), Some(parent_desk)) = (
+                value["parent_workspace_id"].as_str().map(str::to_owned),
+                value["parent_desk_key"].as_str().map(str::to_owned),
+            ) && let Some(parent) = groups.iter_mut().find(|g| g.id == parent_ws)
+            {
+                parent.project(&snapshots, true);
+                if let Some(origin) = children::build_derived_origin(parent, &parent_desk) {
+                    value["derived_origin"] = origin;
+                }
+            }
         }
         return Response::json(&value);
     }

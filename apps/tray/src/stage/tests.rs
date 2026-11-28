@@ -721,3 +721,326 @@ fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_de
     );
     assert_eq!(stage_body["managers"][0]["optimized"]["count"], 2);
 }
+
+#[test]
+fn derived_office_endpoint_and_child_workspace_project_derived_origin() {
+    use crate::data::snapshot::{Item, Snapshot};
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    let parent_ws = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let child_ws = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let derived_sid = "44444444-4444-4444-8444-444444444444";
+    let derived_bk = crate::data::boss_app::boss_key("claude", derived_sid);
+    let derived_desk = crate::terminal::thread_desk_key("claude", derived_sid);
+    let derived_thread = derived_desk.strip_prefix("thread:").unwrap().to_owned();
+
+    let parent_view = Arc::new(json!({
+        "director": {
+            "created": "2026-11-28T00:00:00Z",
+            "tasks": [
+                {
+                    "id": "t-drv",
+                    "provider": "claude",
+                    "model": "claude-opus-4-6",
+                    "role": "调试员",
+                    "thread": derived_thread,
+                    "prompt": "请帮我查一下登录竞态",
+                    "output": "已找到原因并修复。",
+                    "status": "succeeded",
+                    "time": "2026-11-28T00:10:00Z",
+                    "elapsed_ms": 5000,
+                    "execution_mode": "terminal",
+                    "identity": {"provider": "claude", "model": "claude-opus-4-6", "model_short": "opus", "handle": "@opus"}
+                },
+                {
+                    "id": "t-other",
+                    "provider": "codex",
+                    "model": "gpt-6.1",
+                    "thread": "other-thread",
+                    "prompt": "另一个后台任务",
+                    "output": "完成",
+                    "status": "succeeded",
+                    "time": "2026-11-28T00:20:00Z",
+                    "execution_mode": "background"
+                }
+            ]
+        }
+    }));
+    let child_view = Arc::new(json!({
+        "director": {
+            "created": "2026-11-28T01:02:00Z",
+            "tasks": [
+                {
+                    "id": "t-sub",
+                    "provider": "codex",
+                    "model": "gpt-6.1",
+                    "prompt": "写单测",
+                    "status": "running",
+                    "time": "2026-11-28T01:02:00Z",
+                    "execution_mode": "background"
+                }
+            ]
+        }
+    }));
+    let make_parent = || Snapshot {
+        item: Item {
+            id: "c-parent".to_owned(),
+            title: "父工作区".to_owned(),
+            mode: "task".to_owned(),
+            status: "idle".to_owned(),
+            updated: "2026-11-28T01:00:00Z".to_owned(),
+            host: Some("codex".to_owned()),
+            manager_session: Some(parent_ws.to_owned()),
+        },
+        view: Arc::clone(&parent_view),
+        live: false,
+        live_updated: None,
+    };
+    let make_child = || Snapshot {
+        item: Item {
+            id: "c-child".to_owned(),
+            title: "派生派出的子任务".to_owned(),
+            mode: "task".to_owned(),
+            status: "running".to_owned(),
+            updated: "2026-11-28T01:05:00Z".to_owned(),
+            host: Some("claude".to_owned()),
+            manager_session: Some(child_ws.to_owned()),
+        },
+        view: Arc::clone(&child_view),
+        live: true,
+        live_updated: Some("2026-11-28T01:05:00Z".to_owned()),
+    };
+
+    let mut hierarchy = super::DerivedHierarchy::default();
+    hierarchy
+        .workspace_owners
+        .insert(parent_ws.to_owned(), parent_ws.to_owned());
+    hierarchy
+        .workspace_owners
+        .insert(child_ws.to_owned(), derived_bk.clone());
+    hierarchy
+        .derived_boss_keys
+        .insert((parent_ws.to_owned(), derived_desk.clone()), derived_bk);
+
+    let places = super::Places {
+        dirs: &[],
+        origins: &Default::default(),
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        sidebar: &Default::default(),
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+
+    // 1. /app/chats lists child_workspace_id on parent's derived entry.
+    let list_res = super::respond_with(
+        "/app/chats",
+        vec![make_parent(), make_child()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(list_res.status, 200);
+    let list_body: Value = serde_json::from_slice(&list_res.body).unwrap();
+    let parent_entry = list_body["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["group"] == parent_ws)
+        .unwrap();
+    assert_eq!(parent_entry["derived"][0]["child_workspace_id"], child_ws);
+
+    // 2. /app/chats/{child_ws} attaches derived_origin containing only upstream messages of parent_desk_key.
+    let child_res = super::respond_with(
+        &format!("/app/chats/{child_ws}"),
+        vec![make_parent(), make_child()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(child_res.status, 200);
+    let child_body: Value = serde_json::from_slice(&child_res.body).unwrap();
+    assert_eq!(child_body["parent_workspace_id"], parent_ws);
+    assert_eq!(child_body["parent_desk_key"], derived_desk);
+    let origin = &child_body["derived_origin"];
+    assert_eq!(origin["parent_workspace_id"], parent_ws);
+    assert_eq!(origin["parent_desk_key"], derived_desk);
+    assert_eq!(origin["parent_title"], "父工作区");
+    assert_eq!(origin["desk"]["key"], derived_desk);
+    let origin_msgs = origin["messages"].as_array().unwrap();
+    assert_eq!(origin_msgs.len(), 2);
+    assert!(origin_msgs.iter().all(|m| m["desk"] == derived_desk));
+
+    // Normal parent workspace must NOT carry derived_origin.
+    let parent_res = super::respond_with(
+        &format!("/app/chats/{parent_ws}"),
+        vec![make_parent(), make_child()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    let parent_body: Value = serde_json::from_slice(&parent_res.body).unwrap();
+    assert!(parent_body.get("derived_origin").is_none());
+
+    // 3. /app/derived?workspace=<parent>&desk=<desk> returns an isomorphic derived office payload.
+    let encoded_desk = derived_desk.replace(':', "%3A");
+    let derived_res = super::respond_with(
+        &format!("/app/derived?workspace={parent_ws}&desk={encoded_desk}"),
+        vec![make_parent()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(derived_res.status, 200);
+    let derived_body: Value = serde_json::from_slice(&derived_res.body).unwrap();
+    assert_eq!(derived_body["derived"], true);
+    assert_eq!(derived_body["host"], "claude");
+    assert_eq!(derived_body["cli_session"], true);
+    assert_eq!(derived_body["cli_title"], Value::Null);
+    assert_eq!(derived_body["cli_title_custom"], false);
+    assert_eq!(derived_body["boss_key"], "claude|Claude Code");
+    assert!(
+        derived_body["updated"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("2026-11-28T00:10:")),
+        "derived office should carry a valid updated timestamp: {:?}",
+        derived_body["updated"]
+    );
+    assert_eq!(derived_body["desks"].as_array().unwrap().len(), 0);
+    assert_eq!(derived_body["rooms"].as_array().unwrap().len(), 0);
+    assert_eq!(derived_body["messages"].as_array().unwrap().len(), 0);
+    assert_eq!(derived_body["optimized"]["count"], 0);
+    assert_eq!(
+        derived_body["derived_origin"]["parent_workspace_id"],
+        parent_ws
+    );
+    assert_eq!(
+        derived_body["derived_origin"]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // 4. Non-derived desk or missing parent returns 404; bad query returns 400.
+    let not_derived = super::respond_with(
+        &format!("/app/derived?workspace={parent_ws}&desk=thread%3Aother-thread"),
+        vec![make_parent()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(not_derived.status, 404);
+    let missing_parent = super::respond_with(
+        &format!("/app/derived?workspace=s-missing&desk={encoded_desk}"),
+        vec![make_parent()],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(missing_parent.status, 404);
+    let bad_query = super::respond_with(
+        "/app/derived?workspace=bad/id&desk=thread%3A1",
+        vec![],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        Some(&hierarchy),
+    );
+    assert_eq!(bad_query.status, 400);
+}
+
+#[test]
+fn derived_origin_caps_upstream_messages_at_300() {
+    use crate::data::snapshot::{Item, Snapshot};
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    let parent_ws = "s-cccccccccccccccccccccccccccccccc";
+    let derived_thread = "thread-many";
+    let derived_desk = format!("thread:{derived_thread}");
+    // 180 tasks * 2 messages (prompt + reply) = 360 upstream messages -> capped to latest 300.
+    let tasks: Vec<Value> = (0..180)
+        .map(|i| {
+            let min = i / 60;
+            let sec = i % 60;
+            json!({
+                "id": format!("t-{i:03}"),
+                "provider": "claude",
+                "model": "claude-opus-4-6",
+                "thread": derived_thread,
+                "prompt": format!("prompt-{i:03}"),
+                "output": format!("reply-{i:03}"),
+                "status": "succeeded",
+                "time": format!("2026-11-28T00:{min:02}:{sec:02}Z"),
+                "elapsed_ms": 100,
+                "execution_mode": "terminal",
+            })
+        })
+        .collect();
+    let snap = Snapshot {
+        item: Item {
+            id: "c-many".to_owned(),
+            title: "长历史".to_owned(),
+            mode: "task".to_owned(),
+            status: "idle".to_owned(),
+            updated: "2026-11-28T01:00:00Z".to_owned(),
+            host: Some("codex".to_owned()),
+            manager_session: Some(parent_ws.to_owned()),
+        },
+        view: Arc::new(
+            json!({ "director": { "created": "2026-11-28T00:00:00Z", "tasks": tasks } }),
+        ),
+        live: false,
+        live_updated: None,
+    };
+    let places = super::Places {
+        dirs: &[],
+        origins: &Default::default(),
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        sidebar: &Default::default(),
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+    let res = super::respond_with(
+        &format!("/app/derived?workspace={parent_ws}&desk=thread%3A{derived_thread}"),
+        vec![snap],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        None,
+    );
+    assert_eq!(res.status, 200);
+    let body: Value = serde_json::from_slice(&res.body).unwrap();
+    let msgs = body["derived_origin"]["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 300);
+    assert_eq!(msgs.first().unwrap()["text"], "prompt-030");
+    assert_eq!(msgs.last().unwrap()["text"], "reply-179");
+    assert_eq!(body["derived_origin"]["parent_desk_key"], derived_desk);
+}

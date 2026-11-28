@@ -415,7 +415,7 @@ impl Reader {
                 links(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
                 self.boss_apps.titles(connection, || self.boss_homes()),
-                (path == "/app/chats" || crate::stage::requested_group(path).is_some())
+                (path == "/app/chats" || crate::stage::watched_group(path).is_some())
                     .then(|| crate::stage::read_hierarchy(Some(connection))),
             ),
             _ => (None, None, Vec::new(), Vec::new(), None),
@@ -453,9 +453,9 @@ impl Reader {
             key_links,
             key_origins,
             views,
-        ) = if let Some(group_id) = crate::stage::requested_group(path) {
+        ) = if let Some(group_id) = crate::stage::watched_group(path) {
+            let group_id = group_id.as_str();
             dirs.retain(|dir| dir.workspace == group_id);
-            projects.retain(|id, _| id == group_id);
             let rel_links: Vec<_> = links
                 .iter()
                 .filter(|l| {
@@ -466,12 +466,16 @@ impl Reader {
                 .cloned()
                 .collect();
             let mut watched = HashSet::from([group_id.to_owned()]);
+            if let Some((parent_ws, _)) = hierarchy.as_ref().and_then(|h| h.parent_of(group_id)) {
+                watched.insert(parent_ws.to_owned());
+            }
             for l in &rel_links {
                 watched.insert(l.source.clone());
                 if let Some(target) = &l.target {
                     watched.insert(target.clone());
                 }
             }
+            projects.retain(|id, _| watched.contains(id));
             let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
             let mut sources = Vec::new();
             let mut views = Vec::new();
