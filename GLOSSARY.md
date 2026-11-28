@@ -98,6 +98,9 @@ _Avoid_: 沙箱、席位目录（隔离会议为每席准备的空目录）
 **Provider Session**:
 **Provider** 原生会话标识，用于通过续接继续同一原生对话，是 **私聊** 续接原 **工位** 线程的唯一方式；不作为 **AgentNave** 持久会话或 App 视图概念出现。
 
+**等待任务（Wait Task）**:
+支持 MCP Tasks 的宿主调用 `wait` 时，服务返回的后台 MCP 任务：宿主轮询它，服务在有就绪项时才在那次轮询里收取并交付，取消它只停止等待、不停止任何 **Invocation**（[ADR-0131](docs/adr/0131-wait-as-mcp-task.md)）。
+
 **Invocation Result**:
 **AgentNave** 对 **Provider** 终态的归一化结果，正文只承载最终回答，状态限于 `succeeded`、`failed`、`blocked` 或 `cancelled`。
 

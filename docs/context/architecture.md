@@ -18,7 +18,8 @@ AgentNave 是供 Manager（boss）通过本地 STDIO MCP 使用的薄进程边�
 ## 进程与模块
 
 - **中继与版本化安装**：`agentnave-mcp` 先启动仅依赖标准库的中继（`relay.py`）转发 STDIO；同一环境原地重装且空闲时热切换子进程。App 将每个服务版本装入独立目录，macOS／Linux 宿主配置指向固定启动器 `service/bin/agentnave-mcp`，切换版本只改启动器指向、宿主重连后生效（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)、[ADR-0047](../adr/0047-versioned-service-install.md)、[ADR-0061](../adr/0061-fixed-service-launcher.md)）。
-- **`restart_safe` 合同**：空闲切换由服务 `restart_safe` 与中继在途请求／未读 Invocation 共同判定；持有会话锁、有未落盘回写、有未送达终态轮次，或**任何新增的进程内易失状态**都必须计入 `restart_safe`（保留期内的空闲 Provider 进程除外，丢弃后仅退回冷启动，[ADR-0120](../adr/0120-idle-keep-for-resume.md)）。
+- **`restart_safe` 合同**：空闲切换由服务 `restart_safe` 与中继在途请求／未读 Invocation 共同判定；持有会话锁、有未落盘回写、有未送达终态轮次，或**任何新增的进程内易失状态**都必须计入 `restart_safe`（保留期内的空闲 Provider 进程除外，丢弃后仅退回冷启动，[ADR-0120](../adr/0120-idle-keep-for-resume.md)）；租约有效的进行中等待任务同样计入，[ADR-0131](../adr/0131-wait-as-mcp-task.md)）。
+- **MCP Tasks 等待任务**：服务在 2026-07-28 连接上声明 `io.modelcontextprotocol/tasks` 扩展；只有 `wait` 在请求声明该扩展时返回任务（T3 主／子线程除外），由 `tasks/get` 懒收取、`tasks/cancel` 只取消等待；任务只存在服务进程内存，中继原样透传（[ADR-0131](../adr/0131-wait-as-mcp-task.md)）。
 - **只读等待模块与会话隔离**：服务包内提供只读等待模块供支持后台命令自唤醒的宿主在后台运行，只读 `inbox/` 快照、不建 MCP 连接；发放资格沿父进程链探测真实宿主路径、参数与版本，不受 `AGENTNAVE_HOST` 短路（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。服务运行在独立会话中，宿主挂起时中继暂停转发、已启任务继续运行，仅在 stdin 关闭时退出。
 - **服务依赖方向**：`mcp_server` → `Conversations` → `Groups` → `InvocationManager` → Adapter / `processes`。Adapter 不拥有进程；`host` 与 Adapter 互不导入，按 CLI 读原生会话日志的逻辑放在两者都不依赖的中性模块。
 - **交互模式运行时**：Claude（macOS／Linux 伪终端、Windows ConPTY；受限工具路径走 `-p`）与 Antigravity（macOS／Linux 且完全放开权限时）默认由服务自带 helper 驱动；启动信任与外部 `CLAUDE.md` 确认由 CLI 永久写入用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)、[ADR-0078](../adr/0078-startup-confirmations.md)、[ADR-0086](../adr/0086-windows-claude-interactive.md)、[ADR-0102](../adr/0102-agy-native-status.md)）。一轮须等会唤醒主回合的本轮后台任务结束才结算，已有回复但后台任务久未完成时仅发一次不计冷却的提醒（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。

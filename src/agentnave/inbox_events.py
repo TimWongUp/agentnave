@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from agentnave.conversations import Conversations
 from agentnave.group import Round
 from agentnave.inbox_snapshot import BossInbox, InboxItem
+from agentnave.models import InvocationStatus
 
 
 def _empty_items() -> list[InboxItem]:
@@ -140,27 +141,10 @@ def collect_inbox_state(
             ):
                 continue
             task = next((task for task in record.state.tasks if task.id == task_id), None)
-            role = task.role if task else None
-            if listing.status is not None:
-                entry.items.append(
-                    _item(f"task_end:{handle}", "task_end", role, listing.status.value)
-                )
-            else:
+            if listing.status is None:
                 entry.in_flight += 1
-                for prompt in conversations.manager.pending_prompts(handle):
-                    if not prompt.notified:
-                        entry.items.append(
-                            _item(
-                                f"prompt:{handle}:{prompt.prompt_id}",
-                                "prompt",
-                                role,
-                                "prompt_pending",
-                            )
-                        )
-                for code in conversations.manager.unread_blockers(handle):
-                    entry.items.append(
-                        _item(f"blocked:{handle}:{code}", "blocked", role, "execution_blocked")
-                    )
+            role = task.role if task else None
+            entry.items.extend(task_events(conversations, handle, role, listing.status))
         rounds = {**conversations._completed_rounds, **conversations._rounds}  # pyright: ignore[reportPrivateUsage]
         for handle, round_ in rounds.items():
             record = conversations.records.get(round_.group.id)
@@ -172,7 +156,7 @@ def collect_inbox_state(
             ):
                 if not round_.finished and not (round_.cancelling and not round_.error):
                     entry.in_flight += 1
-                entry.items.extend(_round_events(conversations, round_))
+                entry.items.extend(round_events(conversations, round_))
     for entry in states.values():
         entry.items.sort(key=lambda item: item["key"])
     return states
@@ -192,7 +176,26 @@ def review_event_key(round_id: str, seat_id: str, attempt: int) -> str:
     return f"review:{round_id}:{seat_id}:{seat_id}:{attempt}"
 
 
-def _round_events(conversations: Conversations, round_: Round) -> list[InboxItem]:
+def task_events(
+    conversations: Conversations, handle: str, role: str | None, status: InvocationStatus | None
+) -> list[InboxItem]:
+    """Undelivered events of one task invocation: its end, or fresh prompts and blockers."""
+    manager = conversations.manager
+    if status is not None:
+        return [_item(f"task_end:{handle}", "task_end", role, status.value)]
+    items = [
+        _item(f"prompt:{handle}:{prompt.prompt_id}", "prompt", role, "prompt_pending")
+        for prompt in manager.pending_prompts(handle)
+        if not prompt.notified
+    ]
+    items.extend(
+        _item(f"blocked:{handle}:{code}", "blocked", role, "execution_blocked")
+        for code in manager.unread_blockers(handle)
+    )
+    return items
+
+
+def round_events(conversations: Conversations, round_: Round) -> list[InboxItem]:
     handle = round_.id
     if round_.finished:
         if round_.cancelling and not round_.error:

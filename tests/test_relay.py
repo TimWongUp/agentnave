@@ -992,3 +992,94 @@ def test_swap_reaps_the_child_it_kills(
         stubborn.wait()
         assert stubborn.stdout is not None
         stubborn.stdout.close()
+
+
+def test_relay_passes_wait_tasks_through_and_swaps_only_after_they_end(tmp_path: Path) -> None:
+    # The real server on 2026-07-28 with a host that accepts MCP Tasks (ADR-0131).
+    flag = tmp_path / "finish"
+    provider = tmp_path / ("claude.py" if os.name == "nt" else "claude")
+    provider.write_text(
+        "#!/usr/bin/env python3\nimport json,os,sys,time\n"
+        "sys.stdin.read()\n"
+        f"while not os.path.exists({str(flag)!r}):\n    time.sleep(0.05)\n"
+        "print(json.dumps({'type':'result','result':'done','session_id':'s','is_error':False}))\n"
+    )
+    provider.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "claude.cmd").write_text(f'@"{sys.executable}" "%~dp0claude.py" %*\n')
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
+    host = Host(
+        tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "AGENTNAVE_HOST": "hermes",
+            "AGENTNAVE_EXCLUDED_PROVIDERS": "",
+            "AGENTNAVE_DATA_DIR": str(data),
+        },
+        script_text="from agentnave import mcp_server\nmcp_server.main()\n",
+    )
+    meta: dict[str, Any] = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "tasks host", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {
+            "extensions": {"io.modelcontextprotocol/tasks": {}}
+        },
+    }
+
+    def reply(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        host.sequence += 1
+        host.send(
+            {
+                "jsonrpc": "2.0",
+                "id": host.sequence,
+                "method": method,
+                "params": {**params, "_meta": meta},
+            }
+        )
+        while "id" not in (message := json.loads(host.reader.readline())):
+            host.notifications.append(message)
+        assert message["id"] == host.sequence
+        return message
+
+    def poll(task_id: str) -> dict[str, Any]:
+        return reply("tasks/get", {"taskId": task_id})["result"]
+
+    try:
+        started = reply(
+            "tools/call",
+            {
+                "name": "start_agent",
+                "arguments": {"provider": "claude", "prompt": "answer", "cwd": str(tmp_path)},
+            },
+        )["result"]["structuredContent"]
+        task = reply("tools/call", {"name": "wait", "arguments": {}})["result"]
+        assert task["resultType"] == "task" and "content" not in task
+        assert poll(task["taskId"])["status"] == "working"
+        first = host.relay.child.process.pid
+        host.install("1.1")
+        time.sleep(0.5)
+        assert host.relay.child.process.pid == first
+
+        flag.touch()
+        deadline = time.monotonic() + 15
+        while (polled := poll(task["taskId"]))["status"] == "working":
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        update = polled["result"]["structuredContent"]["updates"][0]
+        assert update["invocation_id"] == started["invocation_id"]
+        assert update["status"] == "succeeded"
+
+        # Delivered and ended, nothing is lost any more: the new install takes over.
+        deadline = time.monotonic() + 10
+        while host.relay.child.process.pid == first and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert host.relay.child.process.pid != first
+        unknown = reply("tasks/get", {"taskId": task["taskId"]})
+        assert unknown["error"]["code"] == -32602
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert host.code == [0]

@@ -45,6 +45,7 @@ from agentnave.mcp_payloads import (
     UnreceivedPayload,
 )
 from agentnave.mcp_projection import without_empty_fields
+from agentnave.mcp_wait_tasks import WaitTasksExtension, WaitTaskStore, wait_tasks_active
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
@@ -104,6 +105,7 @@ from agentnave.wait_guidance import (
     CODEX_WAIT_NEXT,
     LONG_WAIT_SECONDS,
     LONG_WAIT_SENTENCE,
+    TASK_ALREADY_WAITING,
     WAIT_AGAIN,
     WAIT_NEXT,
     WAIT_SECONDS,
@@ -241,7 +243,13 @@ def wait_guidance(
         watch_supported=watch_host_cli_supported,
         # The command's quoting is only known to survive POSIX shells (ADR-0121).
         t3_main=current_t3_mode(HOST) == "main" and sys.platform != "win32",
+        tasks=wait_tasks_active(),
     )
+
+
+def already_waiting_next() -> str:
+    """next for a wait refused because an earlier blocking inbox wait holds the inbox."""
+    return TASK_ALREADY_WAITING if wait_tasks_active() else ALREADY_WAITING
 
 
 def terminal_available() -> bool:
@@ -458,6 +466,7 @@ class Runtime:
         self.cancelling: set[str] = set()
         self.inbox_snapshot = InboxSnapshot(data_root(), os.getpid())
         self.inbox_tracker = InboxTracker()
+        self.wait_tasks = WaitTaskStore()
         self._inbox_scheduled: asyncio.Handle | None = None
         self._inbox_closed = False
         self.manager.on_inbox_change = self.schedule_inbox
@@ -508,6 +517,7 @@ class Runtime:
 
     def refresh_inbox(self) -> None:
         self._publish_inbox()
+        self.wait_tasks.notify()
 
     def mark_inbox_delivered(
         self, bosses: set[str], delivered_review_keys: set[str] | None = None
@@ -534,6 +544,7 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
     try:
         yield runtime
     finally:
+        runtime.wait_tasks.close()
         runtime.close_inbox()
         try:
             await runtime.retention.close()
@@ -913,6 +924,7 @@ mcp = _Server(
         t3_preset=t3_active_mode(),
     ),
     lifespan=_lifespan,
+    extensions=[WaitTasksExtension()],
 )
 
 

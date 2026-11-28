@@ -2,6 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-10
+- 由 [ADR-0131](0131-wait-as-mcp-task.md) 修订：支持 MCP Tasks 的连接上 `wait` 转为等待任务，1500 秒窗口只用于没有任务能力的会话。
 - 适用范围由 [ADR-0082](0082-claude-long-wait-terminal-only.md) 收窄为 Claude Code 终端交互会话。
 - 省略 `wait_seconds` 时的窗口由 [ADR-0084](0084-claude-terminal-default-long-wait.md) 修订：长等待会话里省略即 1500 秒。
 - 修订 [ADR-0067](0067-wait-270s-window-and-host-background-limits.md) 的 Claude Code 等待窗口与条目级超时下限。

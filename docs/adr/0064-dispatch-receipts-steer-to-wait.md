@@ -2,6 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-07
+- 由 [ADR-0131](0131-wait-as-mcp-task.md) 修订：支持 MCP Tasks 的连接上，回执 `next` 指向转入后台的等待任务；引导收取的原则不变。
 - 回执 `next` 的收件方式按宿主自唤醒能力选择，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 推送边界由 [ADR-0104](0104-in-app-boss-push.md) 修订：App 内可推送的 boss 可由 App 提示收件，App 外保持原等待方式。
 - 修订 ADR-0007：等待仍由 boss 主动发起，派发调用可以顺带等一次。

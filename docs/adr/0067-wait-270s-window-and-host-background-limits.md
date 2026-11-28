@@ -2,6 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-08
+- 由 [ADR-0131](0131-wait-as-mcp-task.md) 修订：上游 Python SDK 的扩展接口已足以在服务端实现 SEP-2663，本篇「SDK 尚未发版服务端类型」不再构成限制。
 - agy 交互 TUI 的 boss 改用后台等待命令收结果，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - Claude Code 的等待窗口和条目级超时下限由 [ADR-0077](0077-claude-long-wait.md) 修订。
 - 修订 [ADR-0066](0066-unified-wait-window-and-call-sequence.md) 的十分钟等待窗口与十二分钟宿主工具超时下限；补充 [ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0015](0015-app-host-integration.md)。
