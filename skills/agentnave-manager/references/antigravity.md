@@ -20,22 +20,9 @@ macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交�
 
 ## 显式受限工具
 
-`restricted_tools=true` 要求专用 `cwd` 事先含 `.agents/agents/agentnave-discussion.md`，内容须与下列定义一致；缺失或不符时 Adapter 返回错误，不代写角色文件。Studio 的隔离席位会自动准备；单任务由调用方在专用目录中准备，保持现有项目目录不变。
+`restricted_tools=true` 使用默认 Agent，不传 `--agent` 也不向目录写入 `.agents/agents/agentnave-discussion.md`（自 agy 1.5.17 起自定义 Agent 按高倍率扣额，默认 Agent 维持原价）。Adapter 通过本次会话的 `--settings` 传入不落盘的收紧配置：`permissions.deny` 拒绝 `command(*)`、`read_file(*)`、`write_file(*)`、`read_url(*)`、`execute_url(*)`、`download_url(*)`、`mcp(*)`，并关闭非工作区访问与 slash commands、开启终端沙箱、工具权限设为 `request-review`，同时保留 `--sandbox=true`、`--disable-slash-commands=true`。
 
-```markdown
----
-name: agentnave-discussion
-description: Dialogue-only participant for AgentNave discussion rooms.
-tools: []
-mcpServers: []
-skills: []
-plugins: []
-mainAgent: true
-subagent: false
-commandExecutionPolicy: off
----
-You are a conversation participant. Answer the current user request.
-```
+这是权限层拒绝执行，不是移除定义或操作系统沙箱：`read_file`、`write_file`、`edit_file`、`run_command`、MCP 工具调用（含派生子代理读文件）会被拒绝，不写 stderr 且回合正常返回；`--conversation` 续接持续生效且不改写 `settings.json`。但工具声明仍在默认 Agent 上下文中，未走权限表的内置工具（`search_web`、`list_resources`/`read_resource`、`generate_image`、`schedule`、`invoke_subagent` 等）不受该 deny 规则拦截；且默认 Agent 在非空 `cwd` 中仍会加载项目规则（含 `@[label](path)` 文件引用）、hooks，子代理入口也可发现目录内的 `.agents/agents/*.md`。单任务需要内容或规则隔离时，应使用独立空目录或 `isolated=true`，不要在不可信项目目录下仅依赖 `restricted_tools=true`。
 
 ## 项目目录
 

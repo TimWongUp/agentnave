@@ -37,7 +37,7 @@
 
 普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与回复](../skills/agentnave-manager/references/studio.md#讨论范围与回复)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求AgentNave准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
-`isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。会议（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
+`isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。会议（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 
 各 CLI 的原生限制（下列版本已核对本机帮助与受限调用；精确参数以 Adapter 为准，版本或配置变化后复核受影响项）：
 
@@ -46,7 +46,7 @@
 | Claude Code 2.1.295 | safe-mode、空 tools、strict-mcp-config、disable-slash-commands | 保留会话持久化；管理员策略仍可能生效 |
 | CodeBuddy Code 2.142.0 | 空 tools、strict-mcp-config、显式空 MCP 配置、拒绝 mcp__* | 通过自己的 Claude-compatible resume 续接；不使用 Claude 专属 safe-mode 参数。空 tools 与仅启用 Read 的初始化清单都列出全部工具；实际读取以调用记录和文件内容核对 |
 | Codex CLI（本机桌面版 0.162.0-alpha.17.2） | ignore-user-config、关闭 shell/unified_exec/view_image/apps/multi_agent、禁用 web search、只读 sandbox 与 never approval | 保留认证与会话；不加载用户 MCP 配置。受限初次调用与续接均成功，本地读取和终端工具不可用，其他框架工具仍存在 |
-| Antigravity CLI 1.3.4 | 每席工作目录中创建 tools=[]、mcpServers=[] 的专用 agent，关闭命令执行策略与 slash commands、开启 sandbox | --conversation 按本席 ID 续接；不同内容的同名 profile 会拒绝覆盖。单任务也可使用 restricted_tools，但 cwd 必须事先含匹配的角色定义，Adapter 不代写；定义见 [CLI 参考](../skills/agentnave-manager/references/antigravity.md#显式受限工具) |
+| Antigravity CLI 1.5.18 / 1.5.19 | 默认 Agent，`--settings` 传入不落盘的 `permissions.deny`（command、read_file、write_file、read_url、execute_url、download_url、mcp 全量通配）、关闭非工作区访问与 slash commands、开启终端沙箱与 sandbox | --conversation 按本席 ID 续接且规则持续生效，不改写 settings.json；不用自定义 Agent（1.5.17 起按高倍率扣额）。1.5.18 实测文件读写、终端命令、MCP 工具调用及派生子代理读文件均被拒绝且正常返回结果；但工具声明仍在上下文，且 1.5.18 实测与 1.5.19 离线核验显示未走权限表的内置工具（`search_web`、`list_resources`/`read_resource`、`generate_image`、`schedule`、`invoke_subagent` 等）仍可执行，非空 `cwd` 也会加载项目规则（含 `@[label](path)` 文件引用）、hooks 与 `.agents/agents/*.md`。需要目录隔离时使用独立空目录或 `isolated=true`，见 [CLI 参考](../skills/agentnave-manager/references/antigravity.md#显式受限工具) |
 | Grok CLI 1.0.46 | 空 tools、deny `*`、no-subagents、disable-web-search、permission-mode dontAsk | 工具定义仍包含 read_file 等工具；本次真实读取被 deny 规则拒绝，不能把限制执行说成移除定义。当前受限参数不禁用 MCP 连接 |
 | Pi Coding Agent 1.1.0 | no-tools、no-extensions、no-mcp、no-skills、no-prompt-templates | 当前配置仍自动加载工作目录中的 AGENTS.md；同一 session_id 跨 cwd 续接失败，需回原目录续接 |
 

@@ -181,8 +181,6 @@ class ProviderAdapter(Protocol):
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes: ...
 
-    def prepare_seat(self, directory: Path) -> None: ...
-
     def account_warnings(self, environment: Mapping[str, str]) -> list[str]: ...
 
 
@@ -269,9 +267,6 @@ class AdapterHooks:
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
         raise ValueError("this adapter does not support native prompts")
-
-    def prepare_seat(self, directory: Path) -> None:
-        """Prepare a dedicated, empty seat directory before restricted runs use it."""
 
     def account_warnings(self, environment: Mapping[str, str]) -> list[str]:
         """What in the inherited environment may decide the login instead of the account's."""
