@@ -5200,4 +5200,34 @@ test("derived office renders parent back-link, derived boss mood, and dual messa
     JSON.parse(JSON.stringify(merged.map(m => m.text))),
     ["帮我查登录问题", "已定位原因", "派生里我追问一下", "派生终端回复"],
   );
+
+  // 5. Idle derived terminal with running/review child workspace reports running/review wording in boss-side.
+  const sideState = { chat: { group: "ws-boss" } };
+  const sideCtx = vm.createContext({
+    AN: { L: (zh) => zh, at: (s) => Date.parse(s) || 0, relTime: () => "刚刚", deskName: (d) => d.model || "", cliOf: (d) => d.provider || "", cliName: (p) => p, shownName: (g) => g.title || "" },
+    state: sideState,
+    ChatTerminal: {
+      ofDesk: () => null,
+      derivedOf: () => [
+        { group: "ws-child-run", desk_key: "thread:d-run", title: "派生跑子任务", child_status: "running", updated: "2026-11-28T00:05:00Z" },
+        { group: "ws-child-rev", desk_key: "thread:d-rev", title: "派生待审核", child_status: "review", updated: "2026-11-28T00:04:00Z" },
+      ],
+      derivedStateOf: () => "idle",
+      isWaking: () => false,
+      reviving: () => false,
+    },
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, sideCtx);
+  const sideRows = sideCtx.ChatDerived.sideItems({
+    group: "ws-boss",
+    desks: [
+      { key: "thread:d-run", provider: "claude", model: "claude-opus-4-6", derived: true, last_active: "2026-11-28T00:05:00Z" },
+      { key: "thread:d-rev", provider: "codex", model: "gpt-5.4", derived: true, last_active: "2026-11-28T00:04:00Z" },
+    ],
+  });
+  const byId = Object.fromEntries(sideRows.map((r) => [r.id, r]));
+  assert.equal(byId["thread:d-run"].tone, "run");
+  assert.equal(byId["thread:d-run"].sub.startsWith("运行中"), true);
+  assert.equal(byId["thread:d-rev"].tone, "review");
+  assert.equal(byId["thread:d-rev"].sub.startsWith("待审核"), true);
 });

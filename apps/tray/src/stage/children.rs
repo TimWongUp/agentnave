@@ -291,9 +291,12 @@ pub(super) fn derived_office_response(
     let cli_label = label(Some(provider));
     let title = desk
         .identity
-        .get("name")
+        .get("handle_short")
+        .or_else(|| desk.identity.get("handle"))
+        .or_else(|| desk.identity.get("name"))
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
+        .or(desk.role.as_deref().filter(|s| !s.is_empty()))
         .or_else(|| (!desk.model.is_empty()).then_some(desk.model.as_str()))
         .unwrap_or(cli_label);
     let owner = hierarchy

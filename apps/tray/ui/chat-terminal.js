@@ -1186,6 +1186,7 @@ const ChatTerminal = (() => {
   // Right of 「‹ 全部」, which comes and goes: the header is right-aligned, so these stay put.
   el.drAll.after(modes, stopButton);
   modes.before(bossTag);
+  if (el.drDerived && typeof bossTag.before === "function") bossTag.before(el.drDerived);
   el.tl.after(box);
   const switchTo = (on) => () => {
     if (!state.loaded) return;

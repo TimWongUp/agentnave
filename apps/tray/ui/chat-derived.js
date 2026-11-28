@@ -110,11 +110,12 @@ const ChatDerived = (() => {
       if (row) usedRowGroups.add(row.group);
       const m = mood(d, null, parentGroup);
       const childStatus = row?.child_status || "";
-      const active = isActiveRank(m.ds, childStatus);
+      const selfActive = isActiveRank(m.ds, "");
+      const active = selfActive || childStatus === "running" || childStatus === "review";
       const tone = rowTone(m.ds, childStatus);
-      const statusWord = !active && childStatus === "review"
+      const statusWord = !selfActive && childStatus === "review"
         ? L("待审核", "Review")
-        : !active && childStatus === "running"
+        : !selfActive && childStatus === "running"
           ? L("运行中", "Running")
           : m.word;
       const name = row?.display_title || row?.title || deskNameOf(d) || L("派生终端", "Derived terminal");
