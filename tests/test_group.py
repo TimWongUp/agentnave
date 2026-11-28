@@ -9,7 +9,6 @@ from typing import cast
 import pytest
 
 from agentnave.adapters import codex
-from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import TASK_SEPARATOR, InvocationManager
 from agentnave.group import (
     _PREAMBLE,  # pyright: ignore[reportPrivateUsage]
@@ -443,13 +442,8 @@ async def test_invalid_rounds_and_groups_fail_before_launch(
     with pytest.raises(ValueError, match="unique"):
         groups.open(tmp_path, [GroupSeat("a", "claude", {}, tmp_path)] * 2)
     restricted = GroupSeat("g", "antigravity", {"restricted_tools": True}, tmp_path)
-    with pytest.raises(ValueError, match="dedicated cwd"):
-        groups.open(tmp_path, [restricted, GroupSeat("a", "claude", {}, tmp_path)])
-    assert not (tmp_path / ".agents").exists()  # validation never writes into the project
-    seat_dir = tmp_path / "seat"
-    seat_dir.mkdir()
-    write_restricted_profile(seat_dir)
-    groups.open(tmp_path, [GroupSeat("g", "antigravity", {"restricted_tools": True}, seat_dir)])
+    groups.open(tmp_path, [restricted, GroupSeat("a", "claude", {}, tmp_path)])
+    assert not (tmp_path / ".agents").exists()  # restricted seats never write into the project
     # A chosen Codex install that is missing fails at launch, not when the meeting opens.
     monkeypatch.setattr(codex, "_source", lambda: "desktop")
     monkeypatch.setattr(codex, "_bundled_paths", lambda: ())

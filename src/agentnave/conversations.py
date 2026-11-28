@@ -18,7 +18,6 @@ from agentnave.account_limits import (
     check_account,
     claim_known_slots,
 )
-from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.conversations_store import (
     _CONNECTION_ID,
@@ -137,7 +136,7 @@ class Conversations(ConversationStore):
         conversation_id = uuid4().hex
         directory = self._seats_directory(conversation_id)
         if isolated:
-            # Own seat directories make restricted profiles possible and keep seats apart.
+            # Own seat directories keep seats apart.
             cwd = directory
             seats = [
                 replace(
@@ -154,7 +153,6 @@ class Conversations(ConversationStore):
                 directory.mkdir(parents=True, mode=0o700)
                 for seat in seats:
                     seat.cwd.mkdir(parents=True, mode=0o700)
-                    get_adapter(seat.provider).prepare_seat(seat.cwd)
             group = self.open(cwd, seats, conversation_id)
             state = Conversation(
                 id=conversation_id,

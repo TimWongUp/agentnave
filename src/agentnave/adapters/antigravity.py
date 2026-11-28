@@ -81,19 +81,29 @@ def session_model(conversation_id: str | None, *, since: datetime) -> str | None
     return None
 
 
-_DISCUSSION_AGENT = """---
-name: agentnave-discussion
-description: Dialogue-only participant for AgentNave discussion rooms.
-tools: []
-mcpServers: []
-skills: []
-plugins: []
-mainAgent: true
-subagent: false
-commandExecutionPolicy: off
----
-You are a conversation participant. Answer the current user request.
-"""
+# Custom agents (.agents/agents, --agent) bill at a higher rate since agy 1.5.17, so restricted
+# runs keep the default agent and deny every tool through session-only settings instead.
+_RESTRICTED_SETTINGS = json.dumps(
+    {
+        "allowNonWorkspaceAccess": False,
+        "disableSlashCommands": True,
+        "enableTerminalSandbox": True,
+        "toolPermission": "request-review",
+        "agentMode": "",
+        "permissions": {
+            "deny": [
+                "command(*)",
+                "read_file(*)",
+                "write_file(*)",
+                "read_url(*)",
+                "execute_url(*)",
+                "download_url(*)",
+                "mcp(*)",
+            ]
+        },
+    },
+    separators=(",", ":"),
+)
 
 
 def _compact(value: dict[str, object]) -> bytes:
@@ -133,22 +143,6 @@ def _result_capture() -> Callable[[bytes], bytes]:
     return capture
 
 
-def _restricted_profile(directory: Path) -> Path:
-    return directory / ".agents" / "agents" / "agentnave-discussion.md"
-
-
-def write_restricted_profile(directory: Path) -> None:
-    """Prepare a dedicated seat directory; callers own that directory and its cleanup."""
-    profile = _restricted_profile(directory)
-    profile.parent.mkdir(parents=True, exist_ok=True)
-    if profile.exists():
-        if profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
-            raise ValueError("Restricted agent profile already exists with different contents")
-        return
-    with profile.open("x", encoding="utf-8") as stream:
-        stream.write(_DISCUSSION_AGENT)
-
-
 class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
     default_host_cli_mode: Literal["subagent", "launch"] = "launch"
@@ -166,8 +160,9 @@ class AntigravityAdapter(AdapterHooks):
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
         "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
         "interactive (boolean; interactive agy runtime, needs dangerously_skip_permissions; "
-        "not on Windows), restricted_tools (boolean; tool-free profile, only in a dedicated "
-        "seat cwd that already contains it)"
+        "not on Windows), restricted_tools (boolean; default agent with --settings deny rules "
+        "for file, command, URL and MCP tool calls; tools outside the permission table such as "
+        "search_web, MCP resources, generate_image, and subagent entry stay available)"
     )
     _options = {
         "model": "--model",
@@ -199,17 +194,10 @@ class AntigravityAdapter(AdapterHooks):
             argv.extend(("--conversation", request.session_id))
         argv.extend(self.option_args(request))
         if discussion:
-            # agy loads agents only from cwd; never write into the caller's project here.
-            profile = _restricted_profile(request.cwd)
-            if not profile.is_file() or profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
-                raise ValueError(
-                    "antigravity restricted_tools needs a dedicated cwd prepared with "
-                    "write_restricted_profile"
-                )
             argv.extend(
                 (
-                    "--agent",
-                    "agentnave-discussion",
+                    "--settings",
+                    _RESTRICTED_SETTINGS,
                     "--sandbox=true",
                     "--disable-slash-commands=true",
                 )
@@ -255,9 +243,6 @@ class AntigravityAdapter(AdapterHooks):
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
         return session_model(session_id, since=since)
-
-    def prepare_seat(self, directory: Path) -> None:
-        write_restricted_profile(directory)
 
     def usage_query(self, model: str | None) -> UsageQuery | None:
         return UsageQuery(

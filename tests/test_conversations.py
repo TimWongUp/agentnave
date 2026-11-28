@@ -925,6 +925,22 @@ async def test_review_receipt_reports_failed_final_commit(
 async def test_isolated_show_runs_restricted_seats_in_own_directories(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    bin_dir = tmp_path / "bin"
+    agy_script = bin_dir / ("agy.py" if os.name == "nt" else "agy")
+    agy_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "sys.stdin.buffer.read()\n"
+        "seen = {'cwd': os.getcwd(), 'argv': sys.argv[1:]}\n"
+        "print(json.dumps({'event': 'result', 'result': {'status': 'SUCCESS',\n"
+        "                  'response': json.dumps(seen), 'conversation_id': 'agy-1'}}))\n",
+        encoding="utf-8",
+    )
+    agy_script.chmod(0o755)
+    if os.name == "nt":
+        (bin_dir / "agy.cmd").write_text(
+            f'@"{sys.executable}" "%~dp0agy.py" %*\n', encoding="utf-8"
+        )
     monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     (data_root / "members.json").write_text(
@@ -981,12 +997,15 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
             for seat in cast(list[dict[str, object]], show["members"])
         }
         assert seat_dirs["a"] == data_root / "seats" / group_id / "a"
-        assert (seat_dirs["g"] / ".agents" / "agents" / "agentnave-discussion.md").is_file()
+        assert not (seat_dirs["g"] / ".agents").exists()  # no custom agent profile
         started = await _run(
             client,
-            {"group_id": group_id, "seats": ["a"], "order": "parallel", "prompt": "hello"},
+            {"group_id": group_id, "seats": ["a", "g"], "order": "parallel", "prompt": "hello"},
         )
-        seen = _seen(_seats(await _wait(client, started["round_id"]))[0])
+        done_seats = {
+            str(s["seat_id"]): s for s in _seats(await _wait(client, started["round_id"]))
+        }
+        seen = _seen(done_seats["a"])
         assert Path(str(seen["cwd"])).resolve() == seat_dirs["a"].resolve()
         # The tray reads each seat's directory from the saved view.
         viewed = {
@@ -998,6 +1017,12 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         assert argv[argv.index("--model") + 1] == "chosen"
         assert argv[argv.index("--effort") + 1] == "high"
         assert "--safe-mode" in cast(list[str], seen["argv"])
+        seen_g = _seen(done_seats["g"])
+        assert Path(str(seen_g["cwd"])).resolve() == seat_dirs["g"].resolve()
+        argv_g = cast(list[str], seen_g["argv"])
+        assert "--agent" not in argv_g and "--settings" in argv_g
+        assert argv_g[argv_g.index("--model") + 1] == "chosen"
+        assert not (seat_dirs["g"] / ".agents").exists()
         # Host exclusions limit start_agent only; ordinary shows may seat the host CLI too.
         ordinary = await _open(client, {"title": "Open", "cwd": str(tmp_path), "seats": seats})
         started = await _run(
