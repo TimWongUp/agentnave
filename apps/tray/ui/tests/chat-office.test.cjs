@@ -4868,8 +4868,12 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     ["ws-too-deep", "ws-boss", "ws-sub"],
   );
   assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child"), true);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child-first"), true);
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-child-last"), true);
   assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-grandchild"), false);
   assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child"), false);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-first"), false);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-last"), false);
 
   // 2. Inside ws-sub (the derived office), live derived terminal is hosted directly (Close terminal while live; Resume once dormant).
   assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub").id, 50);

@@ -302,7 +302,7 @@ function syncListSelection() {
     setAttr(rec.el, "aria-current", on ? "true" : null);
   }
 }
-function updateItem(rec, g, flat = false) {
+function updateItem(rec, g, flat = false, tree = null) {
   rec.g = g;
   const isChild = isDerivedItem(g);
   // A failure asks nothing of the user, so the list does not call it out.
@@ -313,9 +313,10 @@ function updateItem(rec, g, flat = false) {
   const on = isItemOn(g);
   const pinned = isGroupPinned(g.group);
   const name = shownName(g);
+  const childTree = isChild ? `${tree?.first ? " gi-child-first" : ""}${tree?.last ? " gi-child-last" : ""}` : "";
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${childTree}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(isChild ? ChatTerminal.rowPath(g) : `/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
@@ -446,10 +447,10 @@ function mustShow(g) {
 function stayVisibleWhenFolded(g) {
   return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
 }
-function itemNode(g, folded, flat = false) {
+function itemNode(g, folded, flat = false, tree = null) {
   let rec = state.items.get(g.group);
   if (!rec) state.items.set(g.group, (rec = createItem(g)));
-  updateItem(rec, g, flat);
+  updateItem(rec, g, flat, tree);
   setAttr(rec.el, "data-folded", folded ? "true" : null);
   return rec.el;
 }
@@ -579,10 +580,11 @@ function flatNodes(groups, { prefs, query }) {
   for (const g of shown) {
     nodes.push(itemNode(g, false, true));
     order.push(g.group);
-    for (const child of ChatTerminal.derivedOf?.(g.group) || []) {
-      nodes.push(itemNode(child, false, true));
+    const children = ChatTerminal.derivedOf?.(g.group) || [];
+    children.forEach((child, idx) => {
+      nodes.push(itemNode(child, false, true, { first: idx === 0, last: idx === children.length - 1 }));
       order.push(child.group);
-    }
+    });
   }
   if (items.length > shown.length) {
     nodes.push(
@@ -622,9 +624,13 @@ function groupedNodes(groups, { prefs, query } = {}) {
       const hidden = folded && !(stayVisibleWhenFolded(g) || hasVisibleChild);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
+      const visibleChildren = children.filter((child) => !(folded && !derivedStaysVisible(child)));
+      const firstVisible = visibleChildren[0] || null;
+      const lastVisible = visibleChildren.at(-1) || null;
       for (const child of children) {
         const childHidden = folded && !derivedStaysVisible(child);
-        nodes.push(itemNode(child, childHidden, false));
+        const tree = childHidden ? null : { first: child === firstVisible, last: child === lastVisible };
+        nodes.push(itemNode(child, childHidden, false, tree));
         if (!childHidden) order.push(child.group);
       }
     }

@@ -91,7 +91,11 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi:hover { background: var(--hover); }
 .gi.kbd-active:not(.on):not(.picked) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .gi.on { background: color-mix(in srgb, var(--ink) 7%, transparent); }
-.gi.gi-child { margin-left: 16px; min-height: 38px; padding: 4px 10px 4px 14px; }
+.gi.gi-child { margin-left: 34px; min-height: 38px; padding: 4px 10px 4px 8px; content-visibility: visible; --tree-line: color-mix(in srgb, var(--ink) 20%, var(--bg)); }
+.gi.gi-child::before { left: -12px; top: calc(50% - 6px); bottom: -2px; width: 1.5px; border-radius: 0; background: var(--tree-line); opacity: 0; pointer-events: none; }
+.gi.gi-child:not(.gi-child-last)::before { opacity: 1; }
+.gi.gi-child::after { content: ""; position: absolute; left: -12px; top: -1px; width: 10px; height: calc(50% + 1px); border-left: 1.5px solid var(--tree-line); border-bottom: 1.5px solid var(--tree-line); border-bottom-left-radius: 6px; box-sizing: border-box; pointer-events: none; }
+.gi.gi-child.gi-child-first::after { top: -6px; height: calc(50% + 6px); }
 .gi.gi-child .gi-host { width: 24px; height: 24px; }
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
@@ -159,6 +163,9 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side="off"] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side="off"] .gi { justify-content: flex-start; padding: 5px 10px; }
   .app[data-side="off"] .gi::before { left: 2px; }
+  .app[data-side="off"] .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .app[data-side="off"] .gi.gi-child::before { content: ""; left: -12px; }
+  .app[data-side="off"] .gi.gi-child::after { content: ""; }
 }
 @media not all and (max-width: 920px) {
   .app:has(> .conv.folded) { --conv-col: 0px; }
@@ -179,6 +186,7 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi.gi-child { margin-left: 0; padding: 7px 0; }
+  .gi.gi-child::before, .gi.gi-child::after { content: none; }
   /* the rail shows every group's entries, so the way to the rest stays, as a dot row */
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
   .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
@@ -196,7 +204,9 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side-peek] .gl-more::after { content: none; }
   .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
-  .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .app[data-side-peek] .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .app[data-side-peek] .gi.gi-child::before { content: ""; left: -12px; }
+  .app[data-side-peek] .gi.gi-child::after { content: ""; }
 }
 
 /* ---- floor ---- */
@@ -762,6 +772,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi.gi-child { margin-left: 0; padding: 7px 0; }
+  .gi.gi-child::before, .gi.gi-child::after { content: none; }
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
   .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
   .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(760px, calc(100vw - 64px)); box-shadow: 0 22px 60px #0009; }
@@ -775,7 +786,9 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more::after { content: none; }
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 5px 10px; }
-  .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .gi.gi-child { margin-left: 34px; padding: 4px 10px 4px 8px; }
+  .gi.gi-child::before { content: ""; left: -12px; }
+  .gi.gi-child::after { content: ""; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }
