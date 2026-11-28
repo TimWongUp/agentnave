@@ -22,7 +22,7 @@ macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交�
 
 `restricted_tools=true` 使用默认 Agent，不写也不加载 `.agents/agents/` 下的自定义角色文件（自 agy 1.5.17 起自定义 Agent 按高倍率扣额，默认 Agent 维持原价）。Adapter 通过本次会话的 `--settings` 传入不落盘的收紧配置：`permissions.deny` 拒绝 `command(*)`、`read_file(*)`、`write_file(*)`、`read_url(*)`、`execute_url(*)`、`download_url(*)`、`mcp(*)`，并关闭非工作区访问与 slash commands、开启终端沙箱、工具权限设为 `request-review`，同时保留 `--sandbox=true`、`--disable-slash-commands=true`。任意 `cwd` 均可使用，不必事先准备目录。
 
-这是拒绝执行，不是移除定义：工具声明仍在默认 Agent 上下文中，模型可能尝试调用并被拒绝；agy 在 stderr 报告自动拒绝时，任务按受阻处理。该方案尚未做消耗真实配额的 `agy` 实测。
+这是拒绝执行，不是移除定义：工具声明仍在默认 Agent 上下文中，模型尝试调用文件读写、终端命令或 MCP（含派生子代理读文件）时会被拒绝，不写 stderr 且回合正常返回；`--conversation` 续接持续生效且不改写 `settings.json`。但内置 `search_web` 不经该权限表，在 1.5.18 实测中仍可执行，不能声称完全断网或零工具。
 
 ## 项目目录
 

@@ -46,7 +46,7 @@
 | Claude Code 2.1.295 | safe-mode、空 tools、strict-mcp-config、disable-slash-commands | 保留会话持久化；管理员策略仍可能生效 |
 | CodeBuddy Code 2.142.0 | 空 tools、strict-mcp-config、显式空 MCP 配置、拒绝 mcp__* | 通过自己的 Claude-compatible resume 续接；不使用 Claude 专属 safe-mode 参数。空 tools 与仅启用 Read 的初始化清单都列出全部工具；实际读取以调用记录和文件内容核对 |
 | Codex CLI（本机桌面版 0.162.0-alpha.17.2） | ignore-user-config、关闭 shell/unified_exec/view_image/apps/multi_agent、禁用 web search、只读 sandbox 与 never approval | 保留认证与会话；不加载用户 MCP 配置。受限初次调用与续接均成功，本地读取和终端工具不可用，其他框架工具仍存在 |
-| Antigravity CLI（未实测，按 1.5.17 设置口径） | 默认 Agent，`--settings` 传入不落盘的 `permissions.deny`（command、read_file、write_file、read_url、execute_url、download_url、mcp 全量通配）、关闭非工作区访问与 slash commands、开启终端沙箱与 sandbox | --conversation 按本席 ID 续接；不用自定义 Agent（1.5.17 起按高倍率扣额）。工具声明仍在上下文，只拒绝执行；尚未做消耗真实配额的受限调用实测。单任务可在任意 cwd 使用，见 [CLI 参考](../skills/agentnave-manager/references/antigravity.md#显式受限工具) |
+| Antigravity CLI 1.5.18 | 默认 Agent，`--settings` 传入不落盘的 `permissions.deny`（command、read_file、write_file、read_url、execute_url、download_url、mcp 全量通配）、关闭非工作区访问与 slash commands、开启终端沙箱与 sandbox | --conversation 按本席 ID 续接且规则持续生效，不改写 settings.json；不用自定义 Agent（1.5.17 起按高倍率扣额）。实测文件读写、终端命令、MCP 及派生子代理读文件均被拒绝且正常返回结果；工具声明仍在上下文，且内置 `search_web` 不经该权限表仍可执行。单任务可在任意 cwd 使用，见 [CLI 参考](../skills/agentnave-manager/references/antigravity.md#显式受限工具) |
 | Grok CLI 1.0.46 | 空 tools、deny `*`、no-subagents、disable-web-search、permission-mode dontAsk | 工具定义仍包含 read_file 等工具；本次真实读取被 deny 规则拒绝，不能把限制执行说成移除定义。当前受限参数不禁用 MCP 连接 |
 | Pi Coding Agent 1.1.0 | no-tools、no-extensions、no-mcp、no-skills、no-prompt-templates | 当前配置仍自动加载工作目录中的 AGENTS.md；同一 session_id 跨 cwd 续接失败，需回原目录续接 |
 
