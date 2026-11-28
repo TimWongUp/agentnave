@@ -1903,6 +1903,15 @@ def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provi
                 settings["permissions"]["deny"]
             )
             assert not (tmp_path / ".agents").exists()
+            with pytest.raises(ValueError, match="only model and effort"):
+                adapter.prepare(
+                    InvocationRequest(
+                        provider,
+                        "speak",
+                        tmp_path,
+                        provider_options={"restricted_tools": True, "interactive": True},
+                    )
+                )
     finally:
         for path in command.cleanup_paths:
             path.unlink()

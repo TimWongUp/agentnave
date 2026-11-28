@@ -161,7 +161,8 @@ class AntigravityAdapter(AdapterHooks):
         "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
         "interactive (boolean; interactive agy runtime, needs dangerously_skip_permissions; "
         "not on Windows), restricted_tools (boolean; default agent with --settings deny rules "
-        "for file, command, URL and MCP tools; tool declarations and web search stay available)"
+        "for file, command, URL and MCP tool calls; tools outside the permission table such as "
+        "search_web, MCP resources, generate_image, and subagent entry stay available)"
     )
     _options = {
         "model": "--model",

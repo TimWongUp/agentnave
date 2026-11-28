@@ -44,7 +44,7 @@ AgentNave 是供 Manager（boss）通过本地 STDIO MCP 使用的薄进程边�
 
 ## Provider Adapter 与进程安全边界
 
-- **Adapter 边界**：每个 Adapter 独占对应 CLI 的命令准备、选项校验、原生事件解析、流／文件模型回读、隔离席位准备、账号环境变量声明及排除继承环境变量清单；核心与历史层不按 Provider 名分支。每次准备命令时现解析可执行文件；同一 CLI 的不同安装来源不产生新的 Provider 身份（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。任务原文不写服务日志，stderr 仅在失败时有界返回。
+- **Adapter 边界**：每个 Adapter 独占对应 CLI 的命令准备、选项校验、原生事件解析、流／文件模型回读、账号环境变量声明及排除继承环境变量清单；核心与历史层不按 Provider 名分支。每次准备命令时现解析可执行文件；同一 CLI 的不同安装来源不产生新的 Provider 身份（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。任务原文不写服务日志，stderr 仅在失败时有界返回。
 - **进程树所有权**：macOS／Linux 由专用 POSIX 进程组 supervisor 监督（声明保留能力的 Provider 可在正常回合后留在保留期供同会话续接，到期／挤出／服务退出时清理，[ADR-0120](../adr/0120-idle-keep-for-resume.md)）；Windows 必须挂起创建并先加入 kill-on-close Job Object 再恢复，任一步失败即报错不降级（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。AgentNave 不是沙箱，Provider 原生权限才是安全边界。
 - **用户仓库与隔离目录唯一写入边界**：服务与托盘写用户仓库仅限主工作树根 `.agentnave-worktrees/`、`info/exclude`、`agentnave/` 受管分支及 git 公共目录下 `agentnave/` 仓库锁与租约（托盘不做提交、推送或开 PR，[ADR-0126](../adr/0126-tray-git-status-read-only.md)）。创建与续接重建遵循 `git worktree add`（执行仓库 hooks、filter 与 LFS，不初始化子模块，[ADR-0125](../adr/0125-isolated-dirs-follow-git-worktree.md)）；检查与删除绝不触发 hooks、filter 或 fsmonitor，不进入嵌套仓库。只读无改动且无其他租约的任务成功时自动释放、续接原位重建；其余由 boss 释放或托盘在同一仓库锁与租约下手动删除／规则自动清理（派生会话租约由托盘持至终端结束；双方均识别保留分支的「已收起」状态，[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)、[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)、[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）。
 
