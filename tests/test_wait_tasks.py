@@ -189,7 +189,7 @@ async def test_wait_becomes_a_task_and_collects_like_a_blocking_wait(
         (created,) = tasks.created
         assert created["status"] == "working"
         assert created["pollIntervalMs"] == 2000 and created["ttlMs"] is None
-        assert created["statusMessage"] == "⌨️ Claude Code is typing away…"
+        assert created["statusMessage"] == "💻 Claude Code is typing away…"
         task_id = created["taskId"]
         runtime = runtimes[0]
         assert runtime.wait_tasks.restart_safe() is False
@@ -434,13 +434,13 @@ async def test_lease_releases_the_inbox_and_overdue_tasks_end(
 
 def test_status_line_priorities_in_both_languages() -> None:
     working = WaitScan(working=["Codex", "Claude", "GPT"], meeting_seats=2)
-    assert status_message(working, "zh") == "⌨️ Codex 等 3 位员工 在忙，另有会议讨论中…"
-    assert status_message(WaitScan(working=["Codex"]), "zh") == "⌨️ Codex 正在工位敲键盘…"
+    assert status_message(working, "zh") == "💻 Codex 等 3 位员工 在忙，另有会议讨论中…"
+    assert status_message(WaitScan(working=["Codex"]), "zh") == "💻 Codex 正在工位敲键盘…"
     assert status_message(WaitScan(working=["Codex", "Claude"]), "zh") == (
-        "⌨️ Codex、Claude 正在工位敲键盘…"
+        "💻 Codex、Claude 正在工位敲键盘…"
     )
     assert status_message(WaitScan(working=["Codex", "Claude", "GPT"]), "zh") == (
-        "⌨️ Codex 等 3 位员工正在赶活…"
+        "💻 Codex 等 3 位员工正在赶活…"
     )
     assert status_message(WaitScan(meeting_seats=3), "zh") == "💬 3 位席位正在会议室讨论…"
     stuck = WaitScan(working=["Codex"], stalled=["GPT"])
@@ -452,10 +452,10 @@ def test_status_line_priorities_in_both_languages() -> None:
     assert status_message(WaitScan(ready=True), "zh") == "✨ 有人交卷啦，正在递结果…"
 
     assert status_message(WaitScan(working=["Codex", "Claude"]), "en") == (
-        "⌨️ Codex & Claude are typing away…"
+        "💻 Codex & Claude are typing away…"
     )
     assert status_message(WaitScan(working=["Codex", "Claude", "GPT"]), "en") == (
-        "⌨️ Codex + 2 more typing away…"
+        "💻 Codex + 2 more typing away…"
     )
     assert status_message(WaitScan(meeting_seats=3), "en") == (
         "💬 3 seats chatting in the meeting room…"

@@ -127,22 +127,22 @@ _ZH = {
     "ready_anon": "✨ 有人交卷啦，正在递结果…",
     "prompt": "🙋 {names} 举手等你回话～",
     "stalled": "👀 {names} 好像卡壳了，正催你看看…",
-    "working": "⌨️ {names} 正在工位敲键盘…",
-    "working_many": "⌨️ {names}正在赶活…",
+    "working": "💻 {names} 正在工位敲键盘…",
+    "working_many": "💻 {names}正在赶活…",
     "meeting": "💬 {count} 位席位正在会议室讨论…",
-    "busy_and_meeting": "⌨️ {names} 在忙，另有会议讨论中…",
-    "idle": "⌨️ 员工们正在赶活…",
+    "busy_and_meeting": "💻 {names} 在忙，另有会议讨论中…",
+    "idle": "💻 员工们正在赶活…",
 }
 _EN = {
     "ready": "✨ {names} turned in the work — handing it over…",
     "ready_anon": "✨ Someone turned in the work — handing it over…",
     "prompt": "🙋 {names} raised a hand — waiting for your reply~",
     "stalled": "👀 {names} {looks} stuck — needs a quick look…",
-    "working": "⌨️ {names} {is} typing away…",
-    "working_many": "⌨️ {names} typing away…",
+    "working": "💻 {names} {is} typing away…",
+    "working_many": "💻 {names} typing away…",
     "meeting": "💬 {count} {seats} chatting in the meeting room…",
-    "busy_and_meeting": "⌨️ {names} {is} busy, plus a meeting in progress…",
-    "idle": "⌨️ The team is working on it…",
+    "busy_and_meeting": "💻 {names} {is} busy, plus a meeting in progress…",
+    "idle": "💻 The team is working on it…",
 }
 
 
