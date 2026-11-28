@@ -289,7 +289,9 @@ fn yaml_flow(raw: &str, field: &YamlField) -> Result<(Value, usize), String> {
 
 /// Anchors or aliases anywhere in the entry: its body is rewritten or removed as a whole.
 fn yaml_entry_anchored(raw: &str) -> bool {
-    raw.lines().any(|l| yaml_anchored(l.trim()))
+    raw.lines()
+        .map(str::trim)
+        .any(|text| !text.is_empty() && !text.starts_with('#') && yaml_anchored(text))
 }
 
 pub(super) fn yaml_entry(raw: &str, indent: usize) -> Result<Value, String> {

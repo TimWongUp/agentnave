@@ -37,7 +37,7 @@ fn opaque_bodies_with_yaml_indicators_stay_byte_identical() {
 }
 
 // ruamel.yaml folds a long flow map at 80 columns.
-const FOLDED: &str = "mcp_servers:\n  other:\n    command: keep\n  agentnave:\n    command: \"/old\"\n    env: {\"AGENTNAVE_EXCLUDED_PROVIDERS\": \"\", \"AGENTNAVE_HOST\": \"hermes\", \"AGENTNAVE_HOST_APP\": \"hermes\",\n      \"CODEBUDDY_CONFIG_DIR\": \"/x/.workbuddy\", \"PATH\": \"/bin:/usr/bin\"} # managed\n\n    # note\n    enabled: true\n    timeout: 360\ntail: keep\n";
+const FOLDED: &str = "mcp_servers:\n  other:\n    command: keep\n  agentnave:\n    # note: *kept\n    command: \"/old\"\n    env: {\"AGENTNAVE_EXCLUDED_PROVIDERS\": \"\", \"AGENTNAVE_HOST\": \"hermes\", \"AGENTNAVE_HOST_APP\": \"hermes\",\n      \"CODEBUDDY_CONFIG_DIR\": \"/x/.workbuddy\", \"PATH\": \"/bin:/usr/bin\"} # managed\n\n    # note\n    enabled: true\n    timeout: 360\ntail: keep\n";
 
 #[test]
 fn folded_flow_env_is_read_and_rewritten_without_leftover_lines() {
