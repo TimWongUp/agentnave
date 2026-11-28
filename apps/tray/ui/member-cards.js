@@ -73,9 +73,11 @@
     return [el("div", { className: "s-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
   }
 
+  const cleanPool = (list) => (list ? [...new Set(list.filter((id) => typeof id === "string" && id.trim()))] : null);
+
   // What the pool row reads: scenes of an older file can still hold lists of their own.
   function poolSummary(provider, all, pool) {
-    const visible = (list) => list?.filter((id) => all.includes(id));
+    const visible = (list) => cleanPool(list);
     const count = (list) => (list ? L(`${list.length} 个`, `${list.length}`) : L(`全部 ${all.length} 个`, `All ${all.length}`));
     const scenes = SCENE_IDS.filter((s) => slot(s, provider).enabled);
     const lists = scenes.map((s) => visible(slot(s, provider).allowed));
@@ -94,8 +96,10 @@
     const key = `${provider}/pool`;
     const all = getAllModelIds(provider);
     const pool = shownPool(provider);
-    // Hidden and no longer listed models neither count nor survive an edit of the list.
-    const chosen = pool?.filter((id) => all.includes(id));
+    // Keep every configured pool entry (even ones the CLI no longer lists) until the user unticks it.
+    const chosen = cleanPool(pool);
+    const extra = chosen ? chosen.filter((id) => !all.includes(id)) : [];
+    const options = [...all, ...extra];
     const open = S.pickerOpen === key;
     const rows = [el("div", { className: "s-row" },
       el("span", { className: "s-label" }, L("可用模型", "Available models")),
@@ -112,7 +116,7 @@
       const toggle = (m, on) => {
         if (!chosen && on) return;
         const list = chosen || all;
-        writePool(provider, on ? [...list, m] : list.filter((x) => x !== m));
+        writePool(provider, on ? (list.includes(m) ? list : [...list, m]) : list.filter((x) => x !== m));
       };
       // An older file may still limit one scene by its own list; every model lifts that too.
       const sceneLimited = !hasPool(provider) && SCENE_IDS.some((s) => slot(s, provider).allowed);
@@ -132,32 +136,38 @@
         el("div", { className: "member-picker-actions" },
           el("div", { className: "segment-control", role: "radiogroup", "aria-label": L("可用模型", "Available models") },
             tier(!chosen && !sceneLimited, L("全部模型（含以后新出的）", "All models, including future ones"), useAll, "all"),
-            tier(Boolean(chosen), L("只用勾选的", "Only the ticked"), useTicked, "ticked", !all.length)),
+            tier(Boolean(chosen), L("只用勾选的", "Only the ticked"), useTicked, "ticked", !options.length)),
           chosen ? el("button", { type: "button", dataset: { focusKey: `${key}/none` },
             onClick: () => writePool(provider, []),
           }, L("全不选", "Clear all")) : null,
           el("span", {}, L(`已选 ${chosen ? chosen.length : all.length}`, `Selected ${chosen ? chosen.length : all.length}`)),
           chosen ? el("span", { className: "member-muted" }, L("建议每个 CLI 不超过 10 个模型", "Up to 10 models per CLI recommended")) : null),
-        ...all.map((m) => el("label", { className: "member-option" },
+        ...options.map((m) => el("label", { className: "member-option" },
           el("input", {
             type: "checkbox",
             dataset: { focusKey: `${key}/allow/${m}` },
-            checked: !pool || pool.includes(m),
+            checked: !chosen || chosen.includes(m),
             onChange: (e) => toggle(m, e.target.checked),
           }),
           el("span", { className: "member-option-id" }, m),
+          unlisted(provider, m) ? el("span", { className: "badge badge-warning" }, L("CLI 未列出", "Not listed by CLI")) : null,
           defaults.includes(m) ? el("span", { className: "badge badge-muted" }, L("默认", "Default")) : null))));
     }
     return rows;
   }
 
-  // Bindings the pool no longer has stay as saved, each named on its CLI's card until changed.
+  // Bindings the pool no longer has and pool entries the CLI no longer lists stay as saved, each
+  // named on its CLI's card until changed.
   function poolConflicts(provider) {
+    const unlistedPool = (cleanPool(shownPool(provider)) || []).filter((id) => unlisted(provider, id));
+    const pool = unlistedPool.length
+      ? [L(`可用模型 ${unlistedPool.join("、")} 不在 CLI 列出的模型里`, `Available models not listed by CLI: ${unlistedPool.join(", ")}`)]
+      : [];
     const scenes = SCENE_IDS.map((s) => [SCENES[s], slot(s, provider)])
       .filter(([, current]) => current.enabled && current.model && (outOfPool(provider, current.model) || unlisted(provider, current.model)))
       .map(([name, current]) => L(`${name}的默认模型 ${current.model} 不在可用模型里`, `${name} default model ${current.model} is not in the available models`));
     const seats = S.seatConflicts().filter(({ seat }) => seat.provider === provider).map(S.seatConflictText);
-    return [...scenes, ...seats].map((text) => el("p", { className: "member-error" }, text));
+    return [...pool, ...scenes, ...seats].map((text) => el("p", { className: "member-error" }, text));
   }
 
   function renderMembership(provider, enabled) {
