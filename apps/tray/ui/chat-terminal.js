@@ -1272,20 +1272,22 @@ const ChatTerminal = (() => {
   // whenever the drawer is about something else than the boss.
   function describeControls(x, isDerived, action) {
     const name = isDerived ? (x?.display_title || L("派生终端", "derived terminal")) : "boss";
-    const who = x ? L(`${name}（${cliLabel(x)}）`, `${name} (${cliLabel(x)})`) : name;
+    const bossHost = x?.provider || (!isDerived && (t.resumable || t.handover) ? state?.chat?.host : null);
+    const cliText = x ? cliLabel(x) : (bossHost ? AN.cliName(bossHost) : "");
+    const who = cliText ? L(`${name}（${cliText}）`, `${name} (${cliText})`) : name;
     const label = action ? L(`${action[0]} ${who}的终端`, `${action[1]} ${who} terminal`) : stopButton.textContent;
     setAttr(stopButton, "title", label);
     setAttr(stopButton, "aria-label", label);
     const kind = typeof state !== "undefined" ? state?.drawer?.kind : null;
-    const aside = !!x && ["desk", "room", "isolated"].includes(kind) && !(el.drawer?.classList?.contains?.("term-mode"));
+    const aside = Boolean(bossHost) && ["desk", "room", "isolated"].includes(kind) && !(el.drawer?.classList?.contains?.("term-mode"));
     bossTag.hidden = !aside || (modes.hidden && stopButton.hidden);
     if (bossTag.hidden) return;
     const tip = L(`右侧的终端操作属于 ${who}`, `The terminal controls at right belong to ${who}`);
     setAttr(bossTag, "title", tip);
     setAttr(bossTag, "aria-label", tip);
-    if (bossTag.dataset.key !== x.provider) {
-      bossTag.dataset.key = x.provider;
-      bossTag.replaceChildren(AN.hostTile(x.provider));
+    if (bossTag.dataset.key !== bossHost) {
+      bossTag.dataset.key = bossHost;
+      bossTag.replaceChildren(AN.hostTile(bossHost));
     }
   }
   // The office's terminal `x`, shown in place of the messages when `on`. The switch and the stop
