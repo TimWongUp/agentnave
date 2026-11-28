@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+import anyio
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.extension import Extension, MethodBinding
 from mcp.server.mcpserver.exceptions import ToolError
@@ -181,42 +182,51 @@ class WaitTask:
             self.updated_at = _now_iso()
 
     async def collect(self) -> None:
-        """Receive what is ready as the blocking wait would return it, or keep waiting."""
+        """Receive what is ready as the blocking wait would return it, or keep waiting.
+
+        Shielded against peer request cancellation: once probe_wait consumes ready items,
+        finishing and caching the result (or re-holding the wait) must complete atomically
+        so cancelling an in-flight tasks/get never drops delivered results (ADR-0131).
+        """
         from agentnave import mcp_tasks
 
         arguments = self.arguments
-        self.release()
-        token = _REQUEST.set(WaitTaskRequest("tasks/get"))  # guidance for a tasks host
-        try:
-            payload = await mcp_tasks.probe_wait(
-                arguments.ids,
-                arguments.include_output,
-                arguments.wait_seconds,
-                arguments.manager_session_id,
-                self.ctx,
-            )
-            if payload["reason"] == "wait_elapsed" and not self.overdue():
-                self.ready = False
-                self.hold()
-                return
-            payload = await mcp_tasks.finish_wait(
-                payload,
-                ids=arguments.ids,
-                seq=arguments.seq,
-                manager_session_id=arguments.manager_session_id,
-                ctx=self.ctx,
-            )
-            self.end("completed", result=_tool_result(payload))
-        except ToolError as exc:
-            self.end("completed", result=_tool_error(str(exc)))
-        except Exception:
-            _log.exception("wait task %s failed to collect", self.task_id)
-            self.end(
-                "failed",
-                error={"code": INTERNAL_ERROR, "message": "Collecting the wait results failed."},
-            )
-        finally:
-            _REQUEST.reset(token)
+        with anyio.CancelScope(shield=True):
+            self.release()
+            token = _REQUEST.set(WaitTaskRequest("tasks/get"))  # guidance for a tasks host
+            try:
+                payload = await mcp_tasks.probe_wait(
+                    arguments.ids,
+                    arguments.include_output,
+                    arguments.wait_seconds,
+                    arguments.manager_session_id,
+                    self.ctx,
+                )
+                if payload["reason"] == "wait_elapsed" and not self.overdue():
+                    self.ready = False
+                    self.hold()
+                    return
+                payload = await mcp_tasks.finish_wait(
+                    payload,
+                    ids=arguments.ids,
+                    seq=arguments.seq,
+                    manager_session_id=arguments.manager_session_id,
+                    ctx=self.ctx,
+                )
+                self.end("completed", result=_tool_result(payload))
+            except ToolError as exc:
+                self.end("completed", result=_tool_error(str(exc)))
+            except Exception:
+                _log.exception("wait task %s failed to collect", self.task_id)
+                self.end(
+                    "failed",
+                    error={
+                        "code": INTERNAL_ERROR,
+                        "message": "Collecting the wait results failed.",
+                    },
+                )
+            finally:
+                _REQUEST.reset(token)
 
     def end(
         self,

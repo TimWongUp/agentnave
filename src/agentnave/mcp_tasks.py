@@ -1114,6 +1114,18 @@ def _track_blocking_wait(
         release()
 
 
+def _wait_window(wait_seconds: Literal[0, 270, 1500] | None, window: float | None) -> float:
+    """Resolve the blocking wait duration; a given window is a wait task's non-blocking pass."""
+    if window is not None:
+        return window
+    if wait_seconds is None:
+        # A long-wait session already decided this call runs in the background (ADR-0084).
+        return float(
+            runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
+        )
+    return float(wait_seconds)
+
+
 async def _receive(
     ids: list[str] | None,
     include_output: bool,
@@ -1147,16 +1159,8 @@ async def _receive(
             explicit_wait_keys = _explicit_wait_workspaces(
                 conversations, invocation_ids, round_ids, manager_session_id
             )
-    # A given window is a wait task's non-blocking pass (ADR-0131).
-    if window is None:
-        if wait_seconds is None:
-            # A long-wait session already decided this call runs in the background (ADR-0084).
-            window = (
-                runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
-            )
-        else:
-            window = wait_seconds
-    deadline = time.monotonic() + window
+    resolved_window = _wait_window(wait_seconds, window)
+    deadline = time.monotonic() + resolved_window
     with _track_blocking_wait(
         ctx,
         blocking_inbox=blocking_inbox,
@@ -1164,7 +1168,7 @@ async def _receive(
         explicit_wait_keys=explicit_wait_keys,
     ):
         while True:
-            timeout = min(float(window), max(0.0, deadline - time.monotonic()))
+            timeout = min(resolved_window, max(0.0, deadline - time.monotonic()))
             if blocking_inbox:
                 # Re-check the inbox periodically so tasks dispatched mid-wait are received here.
                 timeout = min(timeout, float(runtime.INBOX_WAIT_SLICE_SECONDS))

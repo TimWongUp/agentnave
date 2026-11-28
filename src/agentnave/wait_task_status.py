@@ -200,7 +200,7 @@ def _language_of(value: str) -> Language | None:
     value = value.strip()
     if not value or value in ("C", "POSIX") or value.startswith(("C.", "POSIX.")):
         return None
-    return "zh" if value.lower().startswith("zh") else "en"
+    return "zh" if value.lower().startswith(("zh", "chinese")) else "en"
 
 
 def _macos_preferred_language() -> str | None:

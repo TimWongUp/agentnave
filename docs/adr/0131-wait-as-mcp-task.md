@@ -8,8 +8,8 @@
   - [ADR-0067](0067-wait-270s-window-and-host-background-limits.md)：「上游 Python SDK 未发版 SEP-2663 服务端类型」不再妨碍服务端实现。
   - [ADR-0114](0114-tui-runtime-like-a-user.md) 第 3 节：收件方式表增加「支持 MCP Tasks 的 Claude Code」一行。
   - [ADR-0064](0064-dispatch-receipts-steer-to-wait.md)：回执 `next` 在任务连接上指向等待任务，派发与等待回执引导收取的原则不变。
-  - [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md)：中继不变，`restart_safe` 计入进行中的等待任务。
-- 沿用：[ADR-0007](0007-wait-any-ready-subset.md)（就绪子集、每项只交付一次、只消费写进回复的阻塞）、[ADR-0116](0116-progress-stall-reminder.md)（到限只提醒）、[ADR-0117](0117-private-dispatch-without-skill.md)（随宿主变化的用法写进回执）、[ADR-0121](0121-t3-code-orchestration.md)（T3 主线程的后台命令等收件箱）。
+- 补充：[ADR-0007](0007-wait-any-ready-subset.md)（任务结果与就绪子集等价，每项仍只交付一次、只消费写进回复的阻塞）、[ADR-0010](0010-launcher-relay-swaps-upgraded-server.md)（中继不变，`restart_safe` 计入租约有效的进行中等待任务）。
+- 沿用：[ADR-0116](0116-progress-stall-reminder.md)（到限只提醒）、[ADR-0117](0117-private-dispatch-without-skill.md)（随宿主变化的用法写进回执）、[ADR-0121](0121-t3-code-orchestration.md)（T3 主线程的后台命令等收件箱）。
 
 ## 背景
 

@@ -477,3 +477,78 @@ def test_language_follows_the_process_locale(monkeypatch: pytest.MonkeyPatch) ->
     assert detect_language() == "en"
     monkeypatch.setenv("LC_ALL", "zh_TW.UTF-8")
     assert detect_language() == "zh"
+    # Windows UCRT locale names such as "Chinese (Simplified)_China" when LANG/LC_* are unset.
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(wait_task_status.sys, "platform", "win32")
+    for win_locale, expected in (
+        ("Chinese (Simplified)_China", "zh"),
+        ("Chinese (Traditional)_Taiwan", "zh"),
+        ("Chinese_China", "zh"),
+        ("English_United States", "en"),
+    ):
+        monkeypatch.setattr(
+            wait_task_status.locale, "getlocale", lambda loc=win_locale: (loc, "936")
+        )
+        assert detect_language() == expected
+
+
+@pytest.mark.asyncio
+async def test_cancelling_in_flight_tasks_get_does_not_drop_collected_result(
+    tmp_path: Path, runtimes: list[mcp_runtime.Runtime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Peer cancellation mid-finish_wait must not drop items probe_wait already consumed."""
+    import anyio
+
+    from agentnave import mcp_tasks
+
+    tasks = _Tasks()
+    gate = tmp_path / "go"
+    original_finish = mcp_tasks.finish_wait
+    entered = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def slow_finish(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await proceed.wait()
+        return await original_finish(*args, **kwargs)
+
+    async with _client(tasks) as client:
+        handle = await _start(client, tmp_path, gate)
+        await client.call_tool("wait", {})
+        task_id = tasks.created[-1]["taskId"]
+        store = runtimes[0].wait_tasks
+        gate.write_text("done", encoding="utf-8")
+        deadline = time.monotonic() + 5.0
+        while not store.lookup(task_id).ready:
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.05)
+
+        monkeypatch.setattr(mcp_tasks, "finish_wait", slow_finish)
+        cancelled = False
+
+        async def cancelled_get() -> None:
+            nonlocal cancelled
+            with anyio.CancelScope() as scope:
+
+                async def cancel_once_collecting() -> None:
+                    await entered.wait()
+                    scope.cancel()
+                    proceed.set()
+
+                trigger = asyncio.create_task(cancel_once_collecting())
+                try:
+                    await store.get(task_id)
+                    await anyio.sleep(0)
+                finally:
+                    await trigger
+            cancelled = scope.cancelled_caught
+
+        await cancelled_get()
+        assert cancelled is True
+        # The shielded collect() still completed and cached the result for the next poll.
+        completed = await _raw(client, "tasks/get", {"taskId": task_id})
+        assert completed["status"] == "completed"
+        payload = completed["result"]["structuredContent"]
+        assert payload["updates"][0]["invocation_id"] == handle
+        assert payload["updates"][0]["output"] == "ok"
