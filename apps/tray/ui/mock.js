@@ -1405,14 +1405,23 @@ All checks passed!
       const desk = parent?.desks?.find((d) => d.key === deskKey && d.derived);
       if (!parent || !desk) throw Object.assign(new Error("404"), { status: 404 });
       const messages = (parent.messages || []).filter((m) => m.desk === deskKey || (m.thread?.kind === "desk" && m.thread?.key === deskKey));
+      const enc = (s) => encodeURIComponent(String(s)).replace(/[_!~*'().-]|%([0-9A-F]{2})/gi, (m, hex) => `_${hex || m.charCodeAt(0).toString(16).padStart(2, "0")}`);
+      const derivedId = typeof ChatTerminal !== "undefined" && ChatTerminal.derivedRowId
+        ? ChatTerminal.derivedRowId(ws, deskKey)
+        : typeof ChatDerived !== "undefined" && ChatDerived.derivedRowId
+          ? ChatDerived.derivedRowId(ws, deskKey)
+          : `drv-${enc(ws)}-${enc(deskKey)}`;
       return {
-        group: `drv-${ws}-${deskKey}`,
+        group: derivedId,
         derived: true,
         host: desk.provider,
         app: null,
         label: desk.provider,
+        cli_session: true,
         title: desk.model || desk.provider,
         display_title: null,
+        cli_title: null,
+        cli_title_custom: false,
         boss_art_model: desk.art_model || desk.model || "",
         project: parent.project,
         project_key: parent.project_key,
@@ -1421,7 +1430,9 @@ All checks passed!
         color: 0,
         live: desk.status === "running",
         status: desk.status || "idle",
+        updated: desk.last_active || parent.updated || "",
         isolated_count: 0,
+        boss_key: `${desk.provider}|${desk.provider}`,
         parent_workspace_id: ws,
         parent_desk_key: deskKey,
         derived_origin: {

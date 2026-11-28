@@ -66,27 +66,28 @@ function tpBadge(status) {
   return status ? h(`span.tp-badge.tone-${status[1]}`, {}, status[0]) : null;
 }
 const tpBad = (m) => m?.kind === "notice" && AN.pick(AN.MEMBER, m.status)[1] === "bad";
+function tpOriginCard(origin) {
+  const originMsgs = origin.messages || [];
+  const lastOrigin = [...originMsgs].reverse().find((m) => m.kind === "reply" || m.kind === "typing" || m.kind === "notice") || originMsgs.at(-1);
+  const firstOrigin = originMsgs.find((m) => m.kind === "prompt");
+  const runningOrigin = originMsgs.some((m) => m.kind === "typing") || origin.desk?.status === "running";
+  return {
+    weight: -1,
+    time: lastOrigin?.time || origin.desk?.last_active || "",
+    tag: AN.L("主对话", "Main"),
+    title: AN.L("派生对话", "Derived conversation"),
+    status: runningOrigin ? [AN.L("进行中", "Running"), "run"] : null,
+    faces: origin.desk ? [ART.head(deskChar(origin.desk))] : [],
+    meta: AN.L(`来自 ${origin.parentTitle}`, `From ${origin.parentTitle}`),
+    line: lastOrigin ? tpSummary(lastOrigin) : firstOrigin ? tpFirst(firstOrigin.text) : "",
+    scope: { kind: "origin" },
+  };
+}
 function tpDirectory(c, ctx) {
   const topics = tpTopics(c.messages);
   const items = [];
   const origin = typeof ChatDerived !== "undefined" ? ChatDerived.originOf?.(c) : null;
-  if (origin) {
-    const originMsgs = origin.messages || [];
-    const lastOrigin = [...originMsgs].reverse().find((m) => m.kind === "reply" || m.kind === "typing" || m.kind === "notice") || originMsgs.at(-1);
-    const firstOrigin = originMsgs.find((m) => m.kind === "prompt");
-    const runningOrigin = originMsgs.some((m) => m.kind === "typing") || origin.desk?.status === "running";
-    items.push({
-      weight: -1,
-      time: lastOrigin?.time || origin.desk?.last_active || "",
-      tag: AN.L("主对话", "Main"),
-      title: AN.L("派生对话", "Derived conversation"),
-      status: runningOrigin ? [AN.L("进行中", "Running"), "run"] : null,
-      faces: origin.desk ? [ART.head(deskChar(origin.desk))] : [],
-      meta: AN.L(`来自 ${origin.parentTitle}`, `From ${origin.parentTitle}`),
-      line: lastOrigin ? tpSummary(lastOrigin) : firstOrigin ? tpFirst(firstOrigin.text) : "",
-      scope: { kind: "origin" },
-    });
-  }
+  if (origin) items.push(tpOriginCard(origin));
   for (const room of ctx.rooms.values()) {
     const last = topics.filter((t) => t.kind === "round" && t.conversation === room.id).at(-1);
     const failed = room.status === "failed" || last?.replies.some(tpBad);

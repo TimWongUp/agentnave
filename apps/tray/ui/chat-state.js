@@ -458,12 +458,9 @@ function partitionNested(groups) {
   const present = new Set(groups.map((g) => g.group));
   const nestedIds = new Set();
   for (const parent of groups) {
-    if (parent.handover === "pending" || parent.parent_workspace_id) continue;
+    if (parent.parent_workspace_id) continue;
     for (const d of ChatTerminal.derivedOf?.(parent.group) || []) {
       if (d.child_workspace_id && present.has(d.child_workspace_id)) nestedIds.add(d.child_workspace_id);
-      for (const child of ChatTerminal.derivedChildrenOf?.(parent.group, d.desk_key) || []) {
-        if (present.has(child.group)) nestedIds.add(child.group);
-      }
     }
   }
   return {

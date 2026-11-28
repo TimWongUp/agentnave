@@ -405,7 +405,7 @@ fn chat_asset(resource: &str) -> Response {
 
 fn is_derived_route_id(id: &str) -> bool {
     id.starts_with("drv-")
-        && id.len() <= 256
+        && id.len() <= 1024
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')

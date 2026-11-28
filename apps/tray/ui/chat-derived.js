@@ -3,11 +3,243 @@
 // (origin metadata & boss status) per ADR-0124, ADR-0128, and ADR-0130.
 const ChatDerived = (() => {
   const { L } = AN;
+  const DERIVED_PREFIX = "drv-";
   const relTimeOf = (v) => (AN.relTime ? AN.relTime(v) : typeof relTime === "function" ? relTime(v) : "");
   const deskNameOf = (d) => (AN.deskName ? AN.deskName(d) : typeof deskName === "function" ? deskName(d) : d?.model || "");
   const cliOfDesk = (d) => (AN.cliOf ? AN.cliOf(d) : typeof cliOf === "function" ? cliOf(d) : d?.provider || "");
   const cliNameOf = (p) => (AN.cliName ? AN.cliName(p) : p || "");
   const shownNameOf = (g) => (AN.shownName ? AN.shownName(g) : typeof shownName === "function" ? shownName(g) : g?.display_title || g?.title || g?.group || "");
+
+  const encodeToken = (s) =>
+    encodeURIComponent(String(s)).replace(/[_!~*'().-]|%([0-9A-F]{2})/gi, (m, hex) =>
+      `_${hex || m.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    );
+  const decodeToken = (s) => {
+    try {
+      return decodeURIComponent(String(s).replace(/_([0-9a-f]{2})/gi, "%$1"));
+    } catch {
+      return null;
+    }
+  };
+  const derivedRowId = (parentGroup, deskKey) => `${DERIVED_PREFIX}${encodeToken(parentGroup)}-${encodeToken(deskKey)}`;
+  const isDerivedRowId = (id) => typeof id === "string" && id.startsWith(DERIVED_PREFIX);
+  function parseDerivedRowId(id) {
+    if (!isDerivedRowId(id)) return null;
+    const rest = id.slice(DERIVED_PREFIX.length);
+    const sep = rest.indexOf("-");
+    if (sep <= 0 || sep === rest.length - 1 || rest.indexOf("-", sep + 1) >= 0) return null;
+    const parentGroup = decodeToken(rest.slice(0, sep));
+    const deskKey = decodeToken(rest.slice(sep + 1));
+    if (!parentGroup || !deskKey) return null;
+    return { parentGroup, deskKey };
+  }
+
+  function derivedContextOf(group, { pendingId, byId, derivedAll, ofDesk }) {
+    if (!group) return null;
+    const pid = pendingId(group);
+    if (pid != null) {
+      const x = byId(pid);
+      if (x?.derived) {
+        return {
+          group,
+          parentGroup: x.parent_workspace_id || "",
+          deskKey: x.desk_key || "",
+          terminal: x,
+          row: null,
+        };
+      }
+      return null;
+    }
+    const row = derivedAll().find((g) => g.group === group) || null;
+    if (row) {
+      const term = row.terminal != null
+        ? byId(row.terminal)
+        : (row.parent_workspace_id && row.desk_key ? ofDesk(row.parent_workspace_id, row.desk_key) : null);
+      return {
+        group,
+        parentGroup: row.parent_workspace_id || "",
+        deskKey: row.desk_key || "",
+        terminal: term || null,
+        row,
+      };
+    }
+    const parsed = parseDerivedRowId(group);
+    if (parsed) {
+      return {
+        group,
+        parentGroup: parsed.parentGroup,
+        deskKey: parsed.deskKey,
+        terminal: ofDesk(parsed.parentGroup, parsed.deskKey) || null,
+        row: null,
+      };
+    }
+    if (typeof state !== "undefined" && state?.chat?.group === group && isOffice(state.chat)) {
+      const origin = originOf(state.chat);
+      const parentGroup = origin?.parentGroup || state.chat.parent_workspace_id || "";
+      const deskKey = origin?.deskKey || state.chat.parent_desk_key || "";
+      const term = parentGroup && deskKey ? ofDesk(parentGroup, deskKey) : null;
+      return { group, parentGroup, deskKey, terminal: term || null, row: null };
+    }
+    return null;
+  }
+
+  function mergeChildIntoDerivedRow(row, childGroup, { derivedTitles, derivedMeta }) {
+    if (!childGroup) return { ...row, child_workspace_id: null, child_status: "" };
+    const childStatus = childGroup.status || "idle";
+    const childActive = childStatus === "running" || childStatus === "review";
+    const displayTitle = row.display_title
+      || (row.desk_key && derivedTitles?.[row.desk_key])
+      || childGroup.display_title
+      || null;
+    const title = displayTitle || childGroup.title || row.title;
+    const latestUpdated = (AN.at?.(childGroup.updated) || 0) > (AN.at?.(row.updated) || 0)
+      ? childGroup.updated
+      : row.updated;
+    const merged = {
+      ...row,
+      group: childGroup.group,
+      child_workspace_id: childGroup.group,
+      child_status: childStatus,
+      boss_key: row.boss_key || childGroup.owner || null,
+      isolated_count: childGroup.isolated_count || 0,
+      desks_count: childGroup.desks_count || 0,
+      rooms_count: childGroup.rooms_count || 0,
+      display_title: displayTitle,
+      title,
+      live: row.live || Boolean(childGroup.live) || childActive,
+      status: row.status === "idle" && childActive ? childStatus : row.status,
+      updated: latestUpdated,
+    };
+    merged.preview = derivedMeta(merged, { withElapsed: false }).text;
+    return merged;
+  }
+
+  function derivedChildrenOf(parentGroup, deskKey, ofDesk) {
+    if (!parentGroup || !deskKey || typeof state === "undefined" || !Array.isArray(state?.groupsData)) return [];
+    const parent = state.groupsData.find((g) => g.group === parentGroup);
+    if (parent?.parent_workspace_id) return []; // one-level nesting only
+    const histEntry = Array.isArray(parent?.derived) ? parent.derived.find((d) => d.key === deskKey) : null;
+    const liveTerm = ofDesk(parentGroup, deskKey);
+    const bossKey = histEntry?.boss_key || liveTerm?.boss_key || null;
+    const childWsId = histEntry?.child_workspace_id || null;
+    return state.groupsData.filter(
+      (g) =>
+        g.group !== parentGroup &&
+        g.handover !== "pending" &&
+        (Boolean(childWsId && g.group === childWsId) ||
+          (g.parent_workspace_id === parentGroup && g.parent_desk_key === deskKey) ||
+          Boolean(bossKey && g.owner === bossKey)),
+    );
+  }
+
+  function liveDerivedOwnerOf(group, { list, isDerivedLive }) {
+    if (!group) return null;
+    const g = typeof state !== "undefined" && Array.isArray(state?.groupsData)
+      ? state.groupsData.find((item) => item.group === group)
+      : null;
+    const parentWs = g?.parent_workspace_id || "";
+    const parentDesk = g?.parent_desk_key || "";
+    const owner = g?.owner || group;
+    const x = list.find(
+      (item) =>
+        item.derived &&
+        isDerivedLive(item) &&
+        ((parentWs && parentDesk && item.parent_workspace_id === parentWs && item.desk_key === parentDesk) ||
+          Boolean(owner && item.boss_key === owner)),
+    );
+    if (!x) return null;
+    return {
+      id: x.id,
+      parentGroup: x.parent_workspace_id || parentWs,
+      deskKey: x.desk_key || parentDesk,
+    };
+  }
+
+  function derivedSummary(parentGroup, derivedOf) {
+    const list = derivedOf(parentGroup);
+    if (!list.length) return null;
+    let running = 0;
+    let waiting = 0;
+    for (const item of list) {
+      if (item.derived_state === "running" || item.derived_state === "starting" || item.child_status === "running") running += 1;
+      else if (item.derived_state === "waiting" || item.child_status === "review") waiting += 1;
+    }
+    if (!running && !waiting) return null;
+    const parts = [];
+    if (running) parts.push(L(`${running} 运行`, `${running} running`));
+    if (waiting) parts.push(L(`${waiting} 待确认`, `${waiting} waiting`));
+    return { running, waiting, text: parts.join(" · ") };
+  }
+
+  function decorateDerivedOffice(chat, { ofDesk, derivedTitles }) {
+    if (!chat) return chat;
+    const parentGroup = chat.derived_origin?.parent_workspace_id || chat.parent_workspace_id || "";
+    const deskKey = chat.derived_origin?.parent_desk_key || chat.parent_desk_key || "";
+    const x = parentGroup && deskKey ? ofDesk(parentGroup, deskKey) : null;
+    const cliTitle = x?.display_title || (deskKey && derivedTitles?.[deskKey]) || null;
+    if (cliTitle && !chat.display_title) return { ...chat, display_title: cliTitle };
+    return chat;
+  }
+
+  function openDerivedOffice(parentGroup, deskKey, fallbackGroup, { derivedOf, openDerived, ofDesk, isDerivedLive, setTerminal, setOpenOnce }) {
+    if (parentGroup && deskKey) {
+      const row = derivedOf(parentGroup).find((d) => d.desk_key === deskKey);
+      if (row) return openDerived(row.group);
+      const target = fallbackGroup || derivedRowId(parentGroup, deskKey);
+      const live = isDerivedLive(ofDesk(parentGroup, deskKey));
+      setTerminal(target, live);
+      setOpenOnce(target);
+      go(`/chat/${target}`);
+      return true;
+    }
+    if (fallbackGroup) return openDerived(fallbackGroup);
+    return false;
+  }
+
+  function resumeDerivedRow(row, x, { setOpenOnce, revive, prefix }) {
+    const parentGroup = row?.parent_workspace_id || x?.parent_workspace_id || null;
+    const deskKey = row?.desk_key || x?.desk_key || null;
+    const target = row?.group || (parentGroup && deskKey ? derivedRowId(parentGroup, deskKey) : (x ? `${prefix}${x.id}` : null));
+    if (!target) return;
+    if (typeof state !== "undefined" && state?.loaded !== target) {
+      setOpenOnce(target);
+      if (state?.selected !== target) go(`/chat/${target}`);
+    } else if (typeof state !== "undefined") {
+      state.convOpen = true;
+      if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
+    }
+    void revive({ id: x?.id, group: target, parentGroup, deskKey });
+  }
+
+  function resumeDerived({ group, deskKey, row = null, terminal = null }, { derivedOf, ofDesk, setOpenOnce, revive, prefix }) {
+    const resolvedRow = row || (group && deskKey ? derivedOf(group).find((d) => d.desk_key === deskKey) : null) || {
+      group: group && deskKey ? derivedRowId(group, deskKey) : null,
+      parent_workspace_id: group,
+      desk_key: deskKey,
+    };
+    const x = terminal || (group && deskKey ? ofDesk(group, deskKey) : null);
+    resumeDerivedRow(resolvedRow, x, { setOpenOnce, revive, prefix });
+  }
+
+  function derivedMenuItems(id, { findDerivedRow, byId, isDerivedLive, openDerived, resumeRow, close }) {
+    const derivedRow = findDerivedRow(id);
+    if (!derivedRow) return null;
+    const x = derivedRow.terminal != null ? byId(derivedRow.terminal) : null;
+    const live = isDerivedLive(x);
+    const childWsId = derivedRow.child_workspace_id;
+    const childGroup = childWsId && typeof state !== "undefined" && Array.isArray(state?.groupsData)
+      ? state.groupsData.find((g) => g.group === childWsId)
+      : null;
+    const manageItems = childGroup && typeof Actions !== "undefined"
+      ? (Actions.workspaceManageItems?.(childWsId, childGroup) || [])
+      : [];
+    return [
+      { label: L("打开", "Open"), run: () => openDerived(id) },
+      !live && { label: L("续接", "Resume"), run: () => resumeRow(derivedRow, x) },
+      x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
+      ...manageItems,
+    ].filter(Boolean);
+  }
 
   // kind, 中文, English; "dormant" (its process ended after idling) is only Idle to the reader.
   const STATES = {
@@ -220,5 +452,11 @@ const ChatDerived = (() => {
     return { mood: recentlyActive ? "idle" : "sleep", text: L("空闲", "Idle") };
   }
 
-  return { isOffice, hasDownstream, originOf, mood, sideItems, openSideItem, sideMenu, bossMood };
+  return {
+    encodeToken, decodeToken, derivedRowId, isDerivedRowId, parseDerivedRowId,
+    derivedContextOf, mergeChildIntoDerivedRow, derivedChildrenOf, liveDerivedOwnerOf,
+    derivedSummary, decorateDerivedOffice, openDerivedOffice, resumeDerivedRow, resumeDerived,
+    derivedMenuItems,
+    isOffice, hasDownstream, originOf, mood, sideItems, openSideItem, sideMenu, bossMood,
+  };
 })();

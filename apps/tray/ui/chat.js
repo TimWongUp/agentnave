@@ -361,6 +361,53 @@ function instructionsFirst(replies) {
     });
   return [...ordered, ...[...waiting.values()].flat()];
 }
+function applyConvHead(head, L) {
+  if (el.drIco.dataset.key !== head.key) {
+    el.drIco.dataset.key = head.key;
+    el.drIco.replaceChildren(head.ico());
+  }
+  setText(el.drTitle, head.title);
+  setText(el.drSub, head.sub);
+  setAttr(el.drSub, "title", null);
+  el.drAll.hidden = state.drawer.kind === "all";
+  setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
+}
+function renderOriginConv(c, ctx, origin, reset, becameVisible, L) {
+  state.peers = new Set();
+  const renderCtx = {
+    ...ctx,
+    desks: new Map([...ctx.desks, [origin.deskKey, origin.desk]]),
+  };
+  let combined = origin.messages || [];
+  let derivedNotice = "";
+  if (typeof requestDerivedTurns === "function") {
+    const fetched = requestDerivedTurns(c, renderCtx, origin.deskKey, {
+      workspace: origin.parentGroup,
+      desk: origin.desk,
+      origin: true,
+    });
+    if (fetched?.error) derivedNotice = fetched.error;
+    if (fetched?.turns?.length) {
+      combined = mergeDerivedMessages(
+        combined,
+        buildDerivedUserMessages(c, origin.desk, origin.deskKey, fetched.turns),
+      );
+    }
+  }
+  if (typeof syncDerivedNotice === "function") syncDerivedNotice(derivedNotice);
+  const shown = threaded(combined);
+  const realCount = shown.filter((m) => m.kind !== "typing").length;
+  applyConvHead(
+    {
+      key: `origin|${origin.parentGroup}|${origin.deskKey}|${deskChar(origin.desk)}`,
+      ico: () => ART.head(deskChar(origin.desk)),
+      title: L("派生对话", "Derived conversation"),
+      sub: L(`来自 ${origin.parentTitle} · ${realCount} 条消息`, `From ${origin.parentTitle} · ${realCount} messages`),
+    },
+    L,
+  );
+  renderConversationMessages(shown, renderCtx, reset, becameVisible);
+}
 function renderConv(c, ctx, forceMeasure = false) {
   const L = AN.L || ((zh) => zh);
   // Beside the floor a folded drawer stays in the page, out to the right, so it can slide; only the overlay hides it.
@@ -436,67 +483,26 @@ function renderConv(c, ctx, forceMeasure = false) {
     if (directOrigin && typeof refreshDerivedTurns === "function") refreshDerivedTurns(origin.parentGroup, origin.deskKey);
     else if (state.drawer.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(c.group, state.drawer.key);
   }
-  let renderCtx = ctx;
-  let combined;
+  const becameVisible = forceMeasure || (wasHidden && !el.drawer.hidden) || (wasFolded && !folded) || !wasVisible;
+  if (directOrigin) return renderOriginConv(c, ctx, origin, reset, becameVisible, L);
+  const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
+  state.peers = stream?.peers || new Set();
+  let combined = stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx));
   let derivedNotice = "";
-  if (directOrigin) {
-    state.peers = new Set();
-    renderCtx = {
-      ...ctx,
-      desks: new Map([...ctx.desks, [origin.deskKey, origin.desk]]),
-    };
-    combined = origin.messages || [];
-    if (typeof requestDerivedTurns === "function") {
-      const fetched = requestDerivedTurns(c, renderCtx, origin.deskKey, {
-        workspace: origin.parentGroup,
-        desk: origin.desk,
-        origin: true,
-      });
-      if (fetched?.error) derivedNotice = fetched.error;
-      if (fetched?.turns?.length) {
-        combined = mergeDerivedMessages(
-          combined,
-          buildDerivedUserMessages(c, origin.desk, origin.deskKey, fetched.turns),
-        );
-      }
-    }
-  } else {
-    const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
-    state.peers = stream?.peers || new Set();
-    combined = stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx));
-    if (stream && typeof isDerivedDeskView === "function" && isDerivedDeskView(c, ctx, state.drawer.key)) {
-      const fetched = requestDerivedTurns(c, ctx, state.drawer.key);
-      if (fetched?.error) derivedNotice = fetched.error;
-      if (fetched?.turns?.length) {
-        combined = mergeDerivedMessages(
-          combined,
-          buildDerivedUserMessages(c, ctx.desks.get(state.drawer.key), state.drawer.key, fetched.turns),
-        );
-      }
+  if (stream && typeof isDerivedDeskView === "function" && isDerivedDeskView(c, ctx, state.drawer.key)) {
+    const fetched = requestDerivedTurns(c, ctx, state.drawer.key);
+    if (fetched?.error) derivedNotice = fetched.error;
+    if (fetched?.turns?.length) {
+      combined = mergeDerivedMessages(
+        combined,
+        buildDerivedUserMessages(c, ctx.desks.get(state.drawer.key), state.drawer.key, fetched.turns),
+      );
     }
   }
   if (typeof syncDerivedNotice === "function") syncDerivedNotice(derivedNotice);
   const shown = threaded(combined);
-  const realCount = shown.filter((m) => m.kind !== "typing").length;
-  const head = directOrigin
-    ? {
-        key: `origin|${origin.parentGroup}|${origin.deskKey}|${deskChar(origin.desk)}`,
-        ico: () => ART.head(deskChar(origin.desk)),
-        title: L("派生对话", "Derived conversation"),
-        sub: L(`来自 ${origin.parentTitle} · ${realCount} 条消息`, `From ${origin.parentTitle} · ${realCount} messages`),
-      }
-    : scopeHead(c, renderCtx, shown);
-  if (el.drIco.dataset.key !== head.key) {
-    el.drIco.dataset.key = head.key;
-    el.drIco.replaceChildren(head.ico());
-  }
-  setText(el.drTitle, head.title);
-  setText(el.drSub, head.sub);
-  setAttr(el.drSub, "title", null);
-  el.drAll.hidden = state.drawer.kind === "all";
-  setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
-  const becameVisible = forceMeasure || (wasHidden && !el.drawer.hidden) || (wasFolded && !folded) || !wasVisible;
-  renderConversationMessages(shown, renderCtx, reset, becameVisible);
+  applyConvHead(scopeHead(c, ctx, shown), L);
+  renderConversationMessages(shown, ctx, reset, becameVisible);
 }
 function renderConversationMessages(shown, ctx, reset, remeasure = false) {
   const L = AN.L || ((zh) => zh);
@@ -782,6 +788,29 @@ function applyHash(ctx) {
   }
 }
 
+async function loadOffice(selected, focus) {
+  if (ChatTerminal.pendingId(selected) != null) return ChatTerminal.office(selected);
+  const parsedDerived = ChatTerminal.parseDerivedRowId?.(selected) || null;
+  if (parsedDerived) {
+    try {
+      const chat = await load(
+        `/app/derived?workspace=${encodeURIComponent(parsedDerived.parentGroup)}&desk=${encodeURIComponent(parsedDerived.deskKey)}`,
+      );
+      return ChatTerminal.decorateDerivedOffice?.(chat) || chat;
+    } catch (derivedErr) {
+      if (derivedErr?.status === 404) return ChatTerminal.office(selected);
+      throw derivedErr;
+    }
+  }
+  const chat = await load(
+    `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
+  );
+  if (typeof ChatDerived !== "undefined" && ChatDerived.isOffice?.(chat)) {
+    return ChatTerminal.decorateDerivedOffice?.(chat) || chat;
+  }
+  return chat;
+}
+
 async function refresh() {
   void AN.providerHealth?.refresh(document.getElementById("provider-health-alert"));
   if (state.refreshing) {
@@ -844,30 +873,10 @@ async function refresh() {
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
     // An agent that has not dispatched has an office with only its boss, drawn here.
     const agent = ChatTerminal.pendingId(selected) != null;
-    const parsedDerived = ChatTerminal.parseDerivedRowId?.(selected) || null;
     if (!state.loaded && !agent) showBlank("loading");
     let chat;
     try {
-      if (agent) {
-        chat = ChatTerminal.office(selected);
-      } else if (parsedDerived) {
-        try {
-          chat = await load(
-            `/app/derived?workspace=${encodeURIComponent(parsedDerived.parentGroup)}&desk=${encodeURIComponent(parsedDerived.deskKey)}`,
-          );
-          chat = ChatTerminal.decorateDerivedOffice?.(chat) || chat;
-        } catch (derivedErr) {
-          if (derivedErr?.status === 404) chat = ChatTerminal.office(selected);
-          else throw derivedErr;
-        }
-      } else {
-        chat = await load(
-          `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
-        );
-        if (typeof ChatDerived !== "undefined" && ChatDerived.isOffice?.(chat)) {
-          chat = ChatTerminal.decorateDerivedOffice?.(chat) || chat;
-        }
-      }
+      chat = await loadOffice(selected, focus);
       if (selected !== state.selected || hashKey !== state.hashKey) {
         state.again = true;
         return;

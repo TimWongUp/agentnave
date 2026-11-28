@@ -909,6 +909,17 @@ fn derived_office_endpoint_and_child_workspace_project_derived_origin() {
     let derived_body: Value = serde_json::from_slice(&derived_res.body).unwrap();
     assert_eq!(derived_body["derived"], true);
     assert_eq!(derived_body["host"], "claude");
+    assert_eq!(derived_body["cli_session"], true);
+    assert_eq!(derived_body["cli_title"], Value::Null);
+    assert_eq!(derived_body["cli_title_custom"], false);
+    assert_eq!(derived_body["boss_key"], "claude|Claude Code");
+    assert!(
+        derived_body["updated"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("2026-11-28T00:10:")),
+        "derived office should carry a valid updated timestamp: {:?}",
+        derived_body["updated"]
+    );
     assert_eq!(derived_body["desks"].as_array().unwrap().len(), 0);
     assert_eq!(derived_body["rooms"].as_array().unwrap().len(), 0);
     assert_eq!(derived_body["messages"].as_array().unwrap().len(), 0);
@@ -959,4 +970,77 @@ fn derived_office_endpoint_and_child_workspace_project_derived_origin() {
         Some(&hierarchy),
     );
     assert_eq!(bad_query.status, 400);
+}
+
+#[test]
+fn derived_origin_caps_upstream_messages_at_300() {
+    use crate::data::snapshot::{Item, Snapshot};
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    let parent_ws = "s-cccccccccccccccccccccccccccccccc";
+    let derived_thread = "thread-many";
+    let derived_desk = format!("thread:{derived_thread}");
+    // 180 tasks * 2 messages (prompt + reply) = 360 upstream messages -> capped to latest 300.
+    let tasks: Vec<Value> = (0..180)
+        .map(|i| {
+            let min = i / 60;
+            let sec = i % 60;
+            json!({
+                "id": format!("t-{i:03}"),
+                "provider": "claude",
+                "model": "claude-opus-4-6",
+                "thread": derived_thread,
+                "prompt": format!("prompt-{i:03}"),
+                "output": format!("reply-{i:03}"),
+                "status": "succeeded",
+                "time": format!("2026-11-28T00:{min:02}:{sec:02}Z"),
+                "elapsed_ms": 100,
+                "execution_mode": "terminal",
+            })
+        })
+        .collect();
+    let snap = Snapshot {
+        item: Item {
+            id: "c-many".to_owned(),
+            title: "长历史".to_owned(),
+            mode: "task".to_owned(),
+            status: "idle".to_owned(),
+            updated: "2026-11-28T01:00:00Z".to_owned(),
+            host: Some("codex".to_owned()),
+            manager_session: Some(parent_ws.to_owned()),
+        },
+        view: Arc::new(
+            json!({ "director": { "created": "2026-11-28T00:00:00Z", "tasks": tasks } }),
+        ),
+        live: false,
+        live_updated: None,
+    };
+    let places = super::Places {
+        dirs: &[],
+        origins: &Default::default(),
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        sidebar: &Default::default(),
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+    let res = super::respond_with(
+        &format!("/app/derived?workspace={parent_ws}&desk=thread%3A{derived_thread}"),
+        vec![snap],
+        true,
+        4,
+        &Default::default(),
+        &Default::default(),
+        &places,
+        None,
+    );
+    assert_eq!(res.status, 200);
+    let body: Value = serde_json::from_slice(&res.body).unwrap();
+    let msgs = body["derived_origin"]["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 300);
+    assert_eq!(msgs.first().unwrap()["text"], "prompt-030");
+    assert_eq!(msgs.last().unwrap()["text"], "reply-179");
+    assert_eq!(body["derived_origin"]["parent_desk_key"], derived_desk);
 }

@@ -2340,5 +2340,28 @@ fn boss_cwd_wins_project_grouping_across_sidebar_and_usage_with_dispatch_fallbac
     assert_eq!(usage_projects[ws_fallback].label, "t3code-dispatch-test");
 }
 
+#[test]
+fn derived_route_id_allows_encoded_paths_up_to_1024_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = Reader::new(dir.path().to_path_buf());
+    let chat_html = reader.respond("/chat/").body;
+
+    // 400-byte drv-... route exceeds the old 256-byte limit and must still serve CHAT_HTML.
+    let long_valid = format!("drv-{}-{}", "a".repeat(64), "b".repeat(330));
+    assert!(long_valid.len() > 256 && long_valid.len() <= 1024);
+    let res = reader.respond(&format!("/chat/{long_valid}"));
+    assert_eq!(res.status, 200);
+    assert_eq!(res.body, chat_html);
+
+    // Exact 1024-byte boundary succeeds; 1025-byte and invalid characters are rejected.
+    let max_valid = format!("drv-{}", "x".repeat(1020));
+    assert_eq!(max_valid.len(), 1024);
+    assert_eq!(reader.respond(&format!("/chat/{max_valid}")).status, 200);
+
+    let too_long = format!("drv-{}", "x".repeat(1021));
+    assert_eq!(reader.respond(&format!("/chat/{too_long}")).status, 404);
+    assert_eq!(reader.respond("/chat/drv-bad.char").status, 404);
+}
+
 mod cli_updates;
 mod projects;

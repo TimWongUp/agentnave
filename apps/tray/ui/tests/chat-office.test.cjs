@@ -1145,6 +1145,7 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
     location: { origin: "null" },
     Date,
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   const { ChatTerminal } = context;
 
@@ -1692,6 +1693,7 @@ test("clicking boss desk returns to terminal with focus, and at most one selecti
   context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? frameProto() : h(tag, attrs, ...children));
   context.AN.h = context.h;
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   const chat = {
@@ -1820,6 +1822,7 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     location: { origin: "null" },
     Date,
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
@@ -2128,6 +2131,7 @@ test("derived terminals nest under parent workspace without counting self-chat a
   });
   context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? Object.assign(makeNode("iframe"), { contentWindow: { postMessage() {} } }) : h(tag, attrs, ...children));
   context.AN.h = context.h;
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   await context.ChatTerminal.refresh();
@@ -2490,6 +2494,7 @@ test("leaving terminal mode clears .term-mode before applyFolds and long/peer/br
 
   vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
   vm.runInContext(readFileSync(`${__dirname}/../chat-messages.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   const chatSrc = readFileSync(`${__dirname}/../chat.js`, "utf8");
   vm.runInContext(chatSrc.slice(0, chatSrc.indexOf("for (const link of")), context);
@@ -3611,6 +3616,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
     context.ChatTerminal?.column(context.state.selected, "codex", "codex");
   };
   context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   await context.ChatTerminal.refresh();
@@ -4343,6 +4349,7 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
     context.syncListSelection();
   };
   context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
 
   // Groups: ws-plain has neither terminals nor derived desks; ws-hist has 2 historical derived desks (one with saved title, one falling back to deskName).
@@ -4846,6 +4853,7 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     chat: groupsData[1],
     ctx: { desks: new Map(), rooms: new Map() },
   });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nthis.ChatDerived = ChatDerived;`, context);
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nthis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
@@ -5234,4 +5242,431 @@ test("derived office renders parent back-link, derived boss mood, and dual messa
   assert.equal(byId["thread:d-run"].sub.startsWith("运行中"), true);
   assert.equal(byId["thread:d-rev"].tone, "review");
   assert.equal(byId["thread:d-rev"].sub.startsWith("待审核"), true);
+});
+
+test("partitionNested prevents pending-handover parent collision and keeps N:1 secondary child workspaces top-level", () => {
+  const { context } = auditUI();
+  const baseH = context.h;
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    const node = baseH(tag);
+    node.closest = () => null;
+    node.classList = {
+      add: (...ks) => ks.forEach((k) => set.add(k)),
+      remove: (...ks) => ks.forEach((k) => set.delete(k)),
+      toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+      contains: (k) => set.has(k),
+    };
+    return node;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = baseH(tag, attrs, ...kids);
+    const set = new Set();
+    n.classList = {
+      add: (...ks) => ks.forEach((k) => set.add(k)),
+      remove: (...ks) => ks.forEach((k) => set.delete(k)),
+      toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+      contains: (k) => set.has(k),
+    };
+    return n;
+  };
+  const env = vm.createContext({
+    AN: {
+      ...context.AN,
+      h,
+      L: (zh) => zh,
+      $: () => makeNode(),
+      at: (s) => Date.parse(s) || 0,
+      setText: context.setText,
+      setAttr: context.setAttr,
+      setClass: (n, cls) => { n.className = cls; },
+      reconcile: (p, nodes) => { p.children = [...nodes]; },
+      href: (p) => p,
+      shownName: (g) => g.title || g.group,
+      chatName: (g) => g.title || g.group,
+      colorClass: () => "c0",
+      hostTile: () => h("span"),
+      pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+      GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+      urgent: (s) => s === "running" || s === "review",
+      ongoing: (s) => s || "idle",
+      cliName: (p) => p,
+      stored: () => null,
+      store: () => {},
+    },
+    h,
+    $: () => makeNode(),
+    L: (zh) => zh,
+    setText: context.setText,
+    setAttr: context.setAttr,
+    setClass: (n, cls) => { n.className = cls; },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    href: (p) => p,
+    go: () => {},
+    shownName: (g) => g.title || g.group,
+    chatName: (g) => g.title || g.group,
+    colorClass: () => "c0",
+    hostTile: () => h("span"),
+    pick: (tbl, k) => tbl?.[k] || [k || "", "idle"],
+    GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+    urgent: (s) => s === "running" || s === "review",
+    stored: () => null,
+    store: () => {},
+    Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
+    ChatGroups: {
+      handover: ":handover",
+      caps: { groups: 10, items: 10, groupStep: 5, itemStep: 5 },
+      defaultPrefs: { view: "project" },
+      arrange: (groups) => {
+        const pending = groups.filter((g) => g.handover === "pending");
+        const normal = groups.filter((g) => g.handover !== "pending");
+        const sections = [];
+        if (pending.length) sections.push({ key: ":handover", title: "待接手", pinned: true, items: pending });
+        if (normal.length) sections.push({ key: "/proj", title: "proj", pinned: false, items: normal });
+        return sections;
+      },
+      capSections: (sections) => ({
+        sections: sections.map((s) => ({ ...s, shown: s.items, hidden: 0 })),
+        hiddenGroups: 0,
+      }),
+    },
+    window: { Avatars: { custom: () => null }, matchMedia: () => ({ matches: false, addEventListener() {} }), addEventListener() {} },
+    document: { documentElement: { lang: "zh" }, addEventListener() {} },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state;`, env);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, env);
+  // Provide minimal ChatTerminal stub backed by ChatDerived for partitionNested & groupedNodes.
+  const derivedByParent = {
+    "ws-pending": [
+      { group: "ws-child-pending", derived: true, parent_workspace_id: "ws-pending", desk_key: "thread:d-pend", child_workspace_id: "ws-child-pending", host: "claude", label: "Claude", title: "派生待交接", status: "idle" },
+    ],
+    "ws-n1": [
+      { group: "ws-child-primary", derived: true, parent_workspace_id: "ws-n1", desk_key: "thread:d-n1", child_workspace_id: "ws-child-primary", host: "claude", label: "Claude", title: "主子工作区", status: "idle" },
+    ],
+  };
+  env.ChatTerminal = {
+    derivedOf: (p) => derivedByParent[p] || [],
+    derivedChildrenOf: (p) => (p === "ws-n1" ? [{ group: "ws-child-primary" }, { group: "ws-child-secondary" }] : []),
+    derivedAll: () => Object.values(derivedByParent).flat(),
+    derivedMeta: () => ({ text: "空闲", tone: "idle" }),
+    derivedSummary: () => null,
+    rowPath: (g) => `/chat/${g.group}`,
+    decorate: () => {},
+    headAction: () => {},
+    menu: () => false,
+  };
+  const groups = [
+    { group: "ws-pending", title: "待交接父", host: "codex", label: "Codex", handover: "pending", status: "idle", updated: "2026-11-28T00:05:00Z" },
+    { group: "ws-child-pending", title: "待交接父的子", host: "claude", label: "Claude", parent_workspace_id: "ws-pending", parent_desk_key: "thread:d-pend", status: "idle", updated: "2026-11-28T00:04:00Z" },
+    { group: "ws-n1", title: "N1父", host: "codex", label: "Codex", status: "idle", updated: "2026-11-28T00:03:00Z" },
+    { group: "ws-child-primary", title: "主子工作区", host: "claude", label: "Claude", parent_workspace_id: "ws-n1", parent_desk_key: "thread:d-n1", status: "idle", updated: "2026-11-28T00:02:00Z" },
+    { group: "ws-child-secondary", title: "次要子工作区", host: "claude", label: "Claude", parent_workspace_id: "ws-n1", parent_desk_key: "thread:d-n1", status: "idle", updated: "2026-11-28T00:01:00Z" },
+  ];
+  env.state.groupsData = groups;
+  const { topGroups } = env.partitionNested(groups);
+  const topIds = topGroups.map((g) => g.group);
+  assert.deepEqual(topIds, ["ws-pending", "ws-n1", "ws-child-secondary"]);
+
+  env.groupedNodes(groups, { prefs: { view: "project" }, query: "" });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(env.state.order)),
+    ["ws-pending", "ws-child-pending", "ws-n1", "ws-child-primary", "ws-child-secondary"],
+  );
+  assert.equal(new Set(env.state.order).size, env.state.order.length, "state.order must have no duplicate ids");
+});
+
+test("merged derived row context menu keeps terminal actions plus child workspace rename/handover/delete while disabling pin and batch pick", async () => {
+  const menus = [];
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    return {
+      tag,
+      children: [],
+      dataset: {},
+      style: {},
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      attributes: {},
+      classList: {
+        add: (...ks) => ks.forEach((k) => set.add(k)),
+        remove: (...ks) => ks.forEach((k) => set.delete(k)),
+        toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+        contains: (k) => set.has(k),
+      },
+      append(...xs) { this.children.push(...xs); },
+      after() {},
+      before() {},
+      replaceChildren(...xs) { this.children = xs; },
+      setAttribute(k, v) { this.attributes[k] = v; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ width: 100, height: 100 }),
+      contains: () => false,
+    };
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeNode(tag);
+    Object.assign(n, attrs);
+    n.children = kids.flat(Infinity).filter((x) => x != null && x !== false);
+    if (kids.length === 1 && typeof kids[0] === "string") n.textContent = kids[0];
+    return n;
+  };
+  const posted = [];
+  const AN = {
+    h,
+    $: () => null,
+    L: (zh) => zh,
+    at: (s) => Date.parse(s) || 0,
+    load: async (url) => {
+      if (url.startsWith("/app/terminal/state")) {
+        return {
+          sessions: [
+            { id: 88, provider: "claude", derived: true, derived_state: "idle", parent_workspace_id: "ws-boss", desk_key: "thread:d-sub", exit: null, workspaces: [] },
+          ],
+          derived_titles: {},
+          cwd: "/repo",
+        };
+      }
+      return {};
+    },
+    post: async (path, body) => { posted.push([path, body]); return {}; },
+    chatName: (g) => g.title || g.group,
+    urgent: () => false,
+    cliName: (p) => p,
+    hostTile: () => h("span"),
+    deskName: (d) => d.model || "",
+    handleOf: () => "",
+    onVisibility: () => {},
+    isHidden: () => false,
+    href: (p) => p,
+  };
+  const state = {
+    selected: "ws-boss",
+    loaded: "ws-boss",
+    order: ["ws-boss", "ws-child"],
+    groupsData: [
+      {
+        group: "ws-boss",
+        title: "主任务",
+        host: "codex",
+        label: "Codex",
+        status: "idle",
+        updated: "2026-11-28T00:05:00Z",
+        derived: [
+          { key: "thread:d-sub", provider: "claude", model: "claude-opus-4-6", child_workspace_id: "ws-child", last_active: "2026-11-28T00:05:00Z" },
+          { key: "thread:d-plain", provider: "codex", model: "gpt-6.1", child_workspace_id: null, last_active: "2026-11-28T00:04:00Z" },
+        ],
+      },
+      {
+        group: "ws-child",
+        title: "派生子工作区",
+        title_id: "conv-child-1",
+        host: "claude",
+        label: "Claude Code",
+        parent_workspace_id: "ws-boss",
+        parent_desk_key: "thread:d-sub",
+        status: "idle",
+        updated: "2026-11-28T00:05:00Z",
+      },
+    ],
+    drawer: { kind: "all" },
+    convOpen: false,
+  };
+  const ctx = vm.createContext({
+    AN,
+    state,
+    el: {
+      app: makeNode("div"),
+      drawer: makeNode("aside"),
+      drAll: makeNode("button"),
+      drDerived: makeNode("button"),
+      drIco: makeNode("span"),
+      drTitle: makeNode("b"),
+      drSub: makeNode("span"),
+      tl: makeNode("div"),
+    },
+    setText: (n, s) => { n.textContent = s; },
+    setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+    go: () => {},
+    refresh: () => {},
+    renderList: () => {},
+    openScope: () => {},
+    addEventListener() {},
+    document: { body: makeNode("body"), documentElement: { dataset: {} }, addEventListener() {}, activeElement: null },
+    window: { addEventListener() {} },
+    innerWidth: 1200,
+    innerHeight: 800,
+    location: { origin: "http://localhost" },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, Promise, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, ctx);
+  ctx.Actions.openMenu = (_e, items) => menus.push(items.map((x) => x.label));
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, ctx);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, ctx);
+  await ctx.ChatTerminal.refresh();
+
+  // Merged child workspace row gets terminal items + child workspace management items.
+  assert.equal(ctx.ChatTerminal.menu("ws-child", { preventDefault() {}, stopPropagation() {} }), true);
+  assert.deepEqual([...menus.at(-1)], ["打开", "关闭终端", "改名…", "交给其他 boss 接手…", "删除 agent…"]);
+
+  // Pure placeholder drv-... row (no child_workspace_id) keeps only terminal items.
+  const plainId = ctx.ChatTerminal.derivedRowId("ws-boss", "thread:d-plain");
+  assert.equal(ctx.ChatTerminal.menu(plainId, { preventDefault() {}, stopPropagation() {} }), true);
+  assert.deepEqual([...menus.at(-1)], ["打开", "续接"]);
+
+  // Merged derived row still disables pinGroup and multi-select pick.
+  await ctx.Actions.pinGroup("ws-child", true);
+  assert.equal(posted.length, 0);
+  assert.equal(ctx.Actions.pick("ws-child", { metaKey: true }), false);
+  assert.equal(ctx.Actions.picked.size, 0);
+});
+
+test("follow preserves overlay drawer via openOnce on derived route upgrades and recentlyActive falls back to derived updated", async () => {
+  const makeNode = (tag = "div") => {
+    const set = new Set();
+    return {
+      tag,
+      children: [],
+      dataset: {},
+      style: {},
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      attributes: {},
+      classList: {
+        add: (...ks) => ks.forEach((k) => set.add(k)),
+        remove: (...ks) => ks.forEach((k) => set.delete(k)),
+        toggle: (k, f) => { const on = f === undefined ? !set.has(k) : Boolean(f); if (on) set.add(k); else set.delete(k); return on; },
+        contains: (k) => set.has(k),
+      },
+      append(...xs) { this.children.push(...xs); },
+      after() {},
+      before() {},
+      replaceChildren(...xs) { this.children = xs; },
+      setAttribute(k, v) { this.attributes[k] = v; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener() {},
+      remove() {},
+      focus() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeNode(tag);
+    Object.assign(n, attrs);
+    n.children = kids.flat(Infinity).filter((x) => x != null && x !== false);
+    if (kids.length === 1 && typeof kids[0] === "string") n.textContent = kids[0];
+    return n;
+  };
+  let sessions = [
+    { id: 51, provider: "claude", derived: true, derived_state: "running", parent_workspace_id: "ws-boss", desk_key: "thread:d1", exit: null, workspaces: [] },
+  ];
+  const nowIso = new Date(Date.now() - 30_000).toISOString();
+  const state = {
+    selected: "term-51",
+    loaded: "term-51",
+    convOpen: true,
+    drawer: { kind: "all" },
+    groupsData: [
+      {
+        group: "ws-boss",
+        title: "主任务",
+        host: "codex",
+        label: "Codex",
+        status: "idle",
+        updated: nowIso,
+        derived: [{ key: "thread:d1", provider: "claude", model: "claude-opus-4-6", last_active: nowIso }],
+      },
+    ],
+  };
+  const ctx = vm.createContext({
+    AN: {
+      h,
+      L: (zh) => zh,
+      at: (s) => Date.parse(s) || 0,
+      SLEEP_AFTER: 30 * 60 * 1000,
+      load: async () => ({ sessions, derived_titles: {}, cwd: "/repo" }),
+      cliName: (p) => p,
+      hostTile: () => h("span"),
+      deskName: (d) => d.model || "",
+      handleOf: () => "",
+      onVisibility: () => {},
+      isHidden: () => false,
+      href: (p) => p,
+    },
+    state,
+    el: {
+      app: makeNode("div"),
+      drawer: makeNode("aside"),
+      drAll: makeNode("button"),
+      drDerived: makeNode("button"),
+      drIco: makeNode("span"),
+      drTitle: makeNode("b"),
+      drSub: makeNode("span"),
+      tl: makeNode("div"),
+      boss: makeNode("section"),
+      desks: makeNode("div"),
+      rooms: makeNode("div"),
+      fx: makeNode("div"),
+      floor: makeNode("div"),
+    },
+    h,
+    L: (zh) => zh,
+    ART: { character: () => "c", figure: () => h("div"), head: () => h("span"), lid: () => h("span"), url: (p) => p },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { openMenu() {}, roomMenu() {} },
+    setText: (n, s) => { n.textContent = s; },
+    setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+    setClass: (n, c) => { n.className = c; },
+    go: () => {},
+    href: (p) => p,
+    addEventListener() {},
+    requestAnimationFrame: (fn) => fn(),
+    ResizeObserver: class { observe() {} },
+    window: { addEventListener() {} },
+    document: { documentElement: { dataset: {}, lang: "zh" }, addEventListener() {} },
+    location: { origin: "http://localhost" },
+    Date, Map, Set, Array, Object, JSON, Math, Number, String, Boolean, Promise, encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, ctx);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, ctx);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), ctx);
+  await ctx.ChatTerminal.refresh();
+
+  // 1. term-51 -> drv-... while narrow overlay drawer is open sets openOnce.
+  const drvId = ctx.ChatTerminal.derivedRowId("ws-boss", "thread:d1");
+  assert.equal(ctx.ChatTerminal.follow("term-51"), drvId);
+  assert.equal(ctx.ChatTerminal.consumeOpen(drvId), true);
+
+  // 2. drv-... -> child_workspace_id while convOpen is true sets openOnce.
+  state.groupsData[0].derived[0].child_workspace_id = "ws-sub-1";
+  state.groupsData.push({
+    group: "ws-sub-1",
+    title: "子工作区",
+    host: "claude",
+    label: "Claude",
+    parent_workspace_id: "ws-boss",
+    parent_desk_key: "thread:d1",
+    status: "running",
+    updated: nowIso,
+  });
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), true);
+
+  // 3. When overlay drawer is closed and terminal is not showing, follow does NOT force openOnce.
+  state.convOpen = false;
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), false);
+
+  // 4. recentlyActive falls back to c.updated and ChatTerminal.findDerivedRow(c.group)?.updated for drv-... not in groupsData.
+  assert.equal(ctx.recentlyActive({ group: drvId, updated: nowIso }), true);
+  assert.equal(ctx.recentlyActive({ group: drvId, updated: "2020-01-01T00:00:00Z" }), false);
+  // Without c.updated, falls back to derived row's updated.
+  delete state.groupsData[0].derived[0].child_workspace_id;
+  state.groupsData.pop();
+  assert.equal(ctx.recentlyActive({ group: drvId }), true);
 });

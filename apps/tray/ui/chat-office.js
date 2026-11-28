@@ -156,8 +156,9 @@ function seatHolder(c) {
 }
 // `live` only means a server is running work right now; an idle boss dozes off like its desks do.
 function recentlyActive(c) {
-  const g = state.groupsData.find((x) => x.group === c.group);
-  return !!g && Date.now() - AN.at(g.updated) < AN.SLEEP_AFTER;
+  const g = state.groupsData?.find?.((x) => x.group === c.group);
+  const updated = g?.updated || c.updated || (typeof ChatTerminal !== "undefined" ? ChatTerminal.findDerivedRow?.(c.group)?.updated : null);
+  return Boolean(updated) && Date.now() - AN.at(updated) < AN.SLEEP_AFTER;
 }
 const MUGS = ["mug", "mug-saucer", "mug-cream", "mug-thermos", "mug-glass", "mug-cat"];
 const PLANTS = ["plant", "pot-succulent", "pot-cactus", "vase-tulip", "vase-daisy", "pot-pothos"];
