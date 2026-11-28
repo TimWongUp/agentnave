@@ -562,7 +562,7 @@ fn codex_is_collapsed_only_while_every_loaded_thread_is_freshly_known_idle() {
 }
 
 #[test]
-fn stopping_a_derived_terminal_collapses_it_and_settles_its_turn() {
+fn ending_a_derived_terminal_removes_it_and_settles_its_turn() {
     let office = Office::new();
     let coordinator = Coordinator::new(
         office.root.path().to_path_buf(),
@@ -575,11 +575,11 @@ fn stopping_a_derived_terminal_collapses_it_and_settles_its_turn() {
     let session = cli();
     report(&session, "idle");
     let id = office.register("claude", Some(SID), session.clone(), Some("inv-stop"));
-    assert_eq!(office.terminals.stop(Some(id)).status, 200);
+    assert_eq!(office.terminals.close(Some(id)).status, 200);
     let receipt = coordinator.run_receipt_by_invocation("inv-stop").unwrap();
     assert_eq!(receipt.state, ReceiptState::Finished);
     assert_eq!(receipt.terminal.unwrap().status, "closed");
     ended(&session);
-    assert_eq!(office.state(id), "dormant");
-    assert_eq!(office.terminals.stop(Some(999)).status, 404);
+    assert!(office.row(id).is_null());
+    assert_eq!(office.terminals.close(Some(999)).status, 404);
 }

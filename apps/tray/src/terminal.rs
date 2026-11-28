@@ -352,7 +352,6 @@ pub(crate) fn request(
             let (cols, rows) = cells(&payload);
             terminals.with_session(id, |session| session.resize(cols, rows))
         }),
-        (_, "/app/terminal/stop") => response::action(method, action, || terminals.stop(id)),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
         (_, "/app/terminal/close-derived") => response::action(method, action, || {
             terminals.close_derived(param(query, "workspace").unwrap_or_default())

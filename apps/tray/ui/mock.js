@@ -1291,16 +1291,6 @@ All checks passed!
       return { session };
     }
     const at = mockTerminals.findIndex((t) => t.id === id);
-    if (route === "/app/terminal/stop" && at >= 0) {
-      const target = mockTerminals[at];
-      target.exit = 0;
-      if (target.derived) {
-        target.derived_state = "dormant";
-        target.derived_busy = false;
-        target.blocked_kind = null;
-        target.derived_since = nowSec();
-      }
-    }
     if (route === "/app/terminal/wake") {
       if (at < 0 || !mockTerminals[at].resumable) {
         throw Object.assign(new Error("该派生会话不可恢复"), { status: 409 });

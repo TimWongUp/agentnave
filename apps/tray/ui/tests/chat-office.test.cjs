@@ -1826,11 +1826,11 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
-  // Idle resumable claude, grok, and antigravity stop directly without confirmation.
+  // Idle resumable claude, grok, and antigravity end directly without confirmation.
   for (const id of [1, 5, 6]) {
-    await context.ChatTerminal.stop(id);
+    await context.ChatTerminal.close(id);
     assert.equal(asks.length, 0);
-    assert.equal(calls.at(-1), `/app/terminal/stop?session=${id}`);
+    assert.equal(calls.at(-1), `/app/terminal/close?session=${id}`);
   }
 
   // Un-dispatched, non-resumable pi, and resumable with running members all require confirmation with Cancel focused.
@@ -1838,24 +1838,16 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   for (const [id, expectedReason] of [[3, "还没有派过活"], [2, "暂不支持"], [4, "仍有组员在运行"]]) {
     asks.length = 0;
     const before = calls.length;
-    await context.ChatTerminal.stop(id);
+    await context.ChatTerminal.close(id);
     assert.equal(asks.length, 1);
     assert.equal(asks[0].buttons[0].label, "取消");
     assert.equal(asks[0].buttons[0].focus, true);
     assert.equal(asks[0].buttons[1].label, "结束终端");
     assert.ok(asks[0].body.some(p => p.textContent.includes(expectedReason)));
-    assert.equal(calls.length, before, "cancelling must not stop");
+    assert.equal(calls.length, before, "cancelling must not end");
   }
 
-  // Closing a live new agent that dispatched nothing asks first, as stopping it does; an exited terminal closes silently.
-  asks.length = 0;
-  const beforeClose = calls.length;
-  await context.ChatTerminal.close(3);
-  assert.equal(asks.length, 1);
-  assert.ok(asks[0].body.some(p => p.textContent.includes("还没有派过活")));
-  assert.equal(calls.length, beforeClose, "cancelling must not close");
-
-  // Derived terminal confirmation rules: idle stops & closes directly; busy/blocked confirm on both stop & close; running members add warning.
+  // Derived terminal confirmation rules: idle ends directly; busy/blocked confirm; running members add warning.
   sessions = [
     ...sessions,
     { id: 10, provider: "codex", cwd: "/repo/d1", exit: null, active: false, derived: true, derived_busy: false, blocked_kind: null, workspaces: [], display_title: null },
@@ -1865,22 +1857,21 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   ];
   await context.ChatTerminal.refresh();
   asks.length = 0;
-  await context.ChatTerminal.stop(10);
   await context.ChatTerminal.close(10);
   assert.equal(asks.length, 0);
-  assert.deepEqual(calls.slice(-2), ["/app/terminal/stop?session=10", "/app/terminal/close?session=10"]);
+  assert.equal(calls.at(-1), "/app/terminal/close?session=10");
 
   nextAnswer = null;
-  for (const [id, op] of [[11, "stop"], [11, "close"], [12, "stop"], [12, "close"]]) {
+  for (const id of [11, 12]) {
     asks.length = 0;
     const before = calls.length;
-    await context.ChatTerminal[op](id);
+    await context.ChatTerminal.close(id);
     assert.equal(asks.length, 1);
     // Only the boss's own dispatch (11) is reported back to it.
     const note = id === 11 ? "这一轮还没做完，结束后会向 boss 回报未完成。" : "这一轮还没做完。";
     assert.ok(asks[0].body.some(p => p.textContent === note));
     assert.equal(asks[0].body.some(p => p.textContent.includes("还没有派过活")), false);
-    assert.equal(calls.length, before, `cancelling derived ${op} must not post`);
+    assert.equal(calls.length, before, "cancelling a derived end must not post");
   }
   nextAnswer = { value: "stop" };
   await context.ChatTerminal.close(11);
@@ -1888,7 +1879,7 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
 
   nextAnswer = null;
   asks.length = 0;
-  await context.ChatTerminal.stop(13);
+  await context.ChatTerminal.close(13);
   assert.equal(asks.length, 1);
   assert.ok(asks[0].body.some(p => p.textContent.includes("仍有组员在运行")));
 
@@ -3586,12 +3577,6 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
         return { ok: true, status: 200, json: async () => ({ session: structuredClone(s) }) };
       }
       if (url.startsWith("/app/terminal/close-derived")) return { ok: true, status: 200, json: async () => ({ closed: 7 }) };
-      if (url.startsWith("/app/terminal/stop")) {
-        const sid = Number(url.split("session=")[1]);
-        const s = sessions.find(x => x.id === sid);
-        if (s) { s.exit = 0; if (s.derived) s.derived_state = "dormant"; }
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
-      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     },
   });
@@ -3695,14 +3680,14 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.refresh();
   assert.equal(loadUrls.at(-1), "/app/terminal/state");
 
-  // 3. Live derived shows mode switch and Close terminal; dormant shows Resume button without mode switch.
+  // 3. Live derived shows mode switch and End derived terminal; dormant shows Resume button without mode switch.
   context.ChatTerminal.readMessages(true);
   context.ChatTerminal.column("term-11", "codex", "codex");
   const stopBtn = drAll._after[1];
   const modesNode = drAll._after[0];
   assert.equal(modesNode.hidden, false);
   assert.equal(stopBtn.hidden, false);
-  assert.equal(stopBtn.textContent, "关闭终端");
+  assert.equal(stopBtn.textContent, "结束派生终端");
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(modesNode.hidden, true);
   assert.equal(stopBtn.hidden, false);
@@ -3763,7 +3748,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), true, "the terminal opens once it is up");
   assert.equal(stopBtn.hidden, false);
-  assert.equal(stopBtn.textContent, "关闭终端");
+  assert.equal(stopBtn.textContent, "结束派生终端");
   assert.ok(inFrame15());
   const oldFrame15 = createdFrames.at(-1);
 
@@ -3869,21 +3854,21 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   context.ChatTerminal.column(goneDrv, "codex", "codex");
   assert.equal(termMode(), true);
 
-  // 5. Context menus: live derived has Open & Close terminal; dormant has Open, Resume, Close terminal;
+  // 5. Context menus: live derived has Open & End derived terminal; dormant has Open, Resume, End derived terminal;
   // boss menu counts only live derived terminals.
   context.ChatTerminal.menu(d11.group, {});
-  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "关闭终端"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "结束派生终端"]);
   context.ChatTerminal.menu(d15.group, {});
-  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "续接", "关闭终端"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "续接", "结束派生终端"]);
   context.ChatTerminal.menu("term-1", {});
-  const closeAllBossItem = menus.at(-1).find(i => i.label.includes("关闭全部派生终端"));
-  assert.equal(closeAllBossItem.label, "关闭全部派生终端（7）");
+  const closeAllBossItem = menus.at(-1).find(i => i.label.includes("结束全部派生终端"));
+  assert.equal(closeAllBossItem.label, "结束全部派生终端（7）");
   await redormant();
 
-  // 6. Unified confirmStop: boss stop merges boss + derived active + draft counts in ONE ask; boss close skips confirm if no active/draft derived.
+  // 6. Unified confirmStop: ending the boss merges boss + derived active + draft counts in ONE ask, and skips it if no active/draft derived.
   asks.length = 0;
   nextAsk = null;
-  await context.ChatTerminal.stop(1); // boss 1 has 3 active (10,11,12,17 -> 4 active) + 1 draft (12)
+  await context.ChatTerminal.close(1); // boss 1 has 3 active (10,11,12,17 -> 4 active) + 1 draft (12)
   assert.equal(asks.length, 1);
   assert.ok(asks[0].body.some(p => p.textContent.includes("有 4 个派生会话还没做完")));
   // Only the one the boss dispatched (11) is reported back to it.
@@ -3905,11 +3890,11 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.closeDerived("ws-1");
   assert.equal(asks.length, 0, "closeDerived with all idle derived sessions must not confirm");
 
-  // When 0 live derived terminals remain, boss menu omits "关闭全部派生终端".
+  // When 0 live derived terminals remain, boss menu omits "结束全部派生终端".
   sessions = sessions.map(s => (s.derived ? { ...s, exit: 0, derived_state: "dormant" } : s));
   await context.ChatTerminal.refresh();
   context.ChatTerminal.menu("term-1", {});
-  assert.equal(menus.at(-1).some(i => i.label.includes("关闭全部派生终端")), false);
+  assert.equal(menus.at(-1).some(i => i.label.includes("结束全部派生终端")), false);
 });
 
 test("ChatDerived renders boss-side derived list alongside meetings, handles single/both layout, click/menu, and hides empty open desks", async () => {
@@ -4068,7 +4053,7 @@ test("ChatDerived renders boss-side derived list alongside meetings, handles sin
   // Context menu on live row vs dormant/missing row.
   const labels = () => JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label)));
   derivedRows[1].listeners.contextmenu[0]({}); // h1 (live running)
-  assert.deepEqual(labels(), ["查看消息", "进入派生办公室", "关闭终端"]);
+  assert.deepEqual(labels(), ["查看消息", "进入派生办公室", "结束派生终端"]);
   derivedRows[3].listeners.contextmenu[0]({}); // n2 (dormant)
   assert.deepEqual(labels(), ["查看消息", "进入派生办公室", "续接"]);
   menus.at(-1).find(i => i.label === "进入派生办公室").run();
@@ -4108,9 +4093,10 @@ test("ChatDerived renders boss-side derived list alongside meetings, handles sin
   assert.equal(state.bossRec.meets.hidden, true);
 });
 
-test("Actions.workspaceMenu includes 关闭全部派生终端（N） when workspace has derived sessions", async () => {
+test("Actions.workspaceMenu includes 结束全部派生终端（N） when workspace has derived sessions", async () => {
   const bodyChildren = [];
   const closedWorkspaces = [];
+  const closedTerminals = [];
   const makeMenuNode = (tag, attrs = {}, ...kids) => {
     const flat = kids.flat(Infinity).filter(x => x != null && x !== false);
     const listeners = {};
@@ -4143,18 +4129,24 @@ test("Actions.workspaceMenu includes 关闭全部派生终端（N） when worksp
     ChatTerminal: {
       derivedOf: id => (id === "ws-1" ? [{ terminal: 10 }, { terminal: 11 }] : []),
       closeDerived: id => closedWorkspaces.push(id),
-      exitedOf: () => null,
+      // A running boss terminal (exit null) still offers to be ended (ADR-0132).
+      workspaceTerminalOf: id => (id === "ws-1" ? { id: 7, exit: null } : null),
+      close: id => closedTerminals.push(id),
     },
     setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
   });
   vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, context);
   context.Actions.workspaceMenu("ws-1", { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
   const menu = bodyChildren.find(n => n.tag === "div.ctx");
-  const closeAllBtn = menu.children.find(b => b.textContent.includes("关闭全部派生终端"));
+  const closeAllBtn = menu.children.find(b => b.textContent.includes("结束全部派生终端"));
   assert.ok(closeAllBtn);
-  assert.equal(closeAllBtn.textContent, "关闭全部派生终端（2）");
+  assert.equal(closeAllBtn.textContent, "结束全部派生终端（2）");
   closeAllBtn.listeners.click[0]();
   assert.deepEqual(closedWorkspaces, ["ws-1"]);
+  const endBtn = menu.children.find(b => b.textContent === "结束终端");
+  assert.ok(endBtn);
+  endBtn.listeners.click[0]();
+  assert.deepEqual(closedTerminals, [7]);
 });
 
 test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-derived/stop/close-derived endpoints", async () => {
@@ -4193,9 +4185,6 @@ test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-d
   const opened = await loadJson("/app/terminal/open-derived?workspace=s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50&desk=thread%3Adrv-old", "POST");
   assert.equal(opened.session.desk_key, "thread:drv-old");
   assert.equal(opened.session.derived_state, "idle");
-  await loadJson("/app/terminal/stop?session=6", "POST");
-  const afterStop = await loadJson("/app/terminal/state");
-  assert.equal(afterStop.sessions.find(s => s.id === 6).derived_state, "dormant");
   const closed = await loadJson("/app/terminal/close-derived?workspace=s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", "POST");
   assert.equal(closed.closed, 6);
 });
@@ -4883,24 +4872,24 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
   assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-first"), false);
   assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-child-last"), false);
 
-  // 2. Inside ws-sub (the derived office), live derived terminal is hosted directly (Close terminal while live; Resume once dormant).
+  // 2. Inside ws-sub (the derived office), live derived terminal is hosted directly (End derived terminal while live; Resume once dormant).
   assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub").id, 50);
   context.ChatTerminal.column("ws-sub", "codex", "codex");
   const stopBtn = drAllAfter.find(n => n.classList.contains("dr-stop"));
-  assert.equal(stopBtn.textContent, "关闭终端");
+  assert.equal(stopBtn.textContent, "结束派生终端");
   assert.equal(stopBtn.hidden, false);
   assert.equal(context.ChatTerminal.showingDerived(), true);
 
-  // Stop confirmation on boss AND on derived warns about own busy tasks.
-  await context.ChatTerminal.stop(50);
+  // End confirmation on boss AND on derived warns about own busy tasks.
+  await context.ChatTerminal.close(50);
   assert.ok(
     asked.at(-1).body.some(node => String(node.textContent).includes("仍有组员在运行")),
-    "stopping derived with own_busy must warn about its own dispatched tasks",
+    "ending derived with own_busy must warn about its own dispatched tasks",
   );
-  await context.ChatTerminal.stop(1);
+  await context.ChatTerminal.close(1);
   assert.ok(
     asked.at(-1).body.some(node => String(node.textContent).includes("自己派出")),
-    "stopping parent boss must warn when derived session has own busy tasks",
+    "ending parent boss must warn when derived session has own busy tasks",
   );
 
   // 3. Once derived session exits (dormant), derived office switches to Resume (and keeps running child status in sidebar).
@@ -5512,7 +5501,7 @@ test("merged derived row context menu keeps terminal actions plus child workspac
 
   // Merged child workspace row gets terminal items + child workspace management items.
   assert.equal(ctx.ChatTerminal.menu("ws-child", { preventDefault() {}, stopPropagation() {} }), true);
-  assert.deepEqual([...menus.at(-1)], ["打开", "关闭终端", "改名…", "交给其他 boss 接手…", "删除 agent…"]);
+  assert.deepEqual([...menus.at(-1)], ["打开", "结束派生终端", "改名…", "交给其他 boss 接手…", "删除 agent…"]);
 
   // Pure placeholder drv-... row (no child_workspace_id) keeps only terminal items.
   const plainId = ctx.ChatTerminal.derivedRowId("ws-boss", "thread:d-plain");
