@@ -266,6 +266,13 @@ for (const slot of ["side", "conv"]) {
   });
 }
 el.drAll.addEventListener("click", () => openScope({ kind: "all" }));
+if (el.drDerived) {
+  el.drDerived.addEventListener("click", () => {
+    if (state.chat?.group && state.drawer?.kind === "desk" && state.drawer.key) {
+      ChatTerminal.openDerivedOffice?.(state.chat.group, state.drawer.key);
+    }
+  });
+}
 // A collapsed peer opens from anywhere on its bubble, as its button says.
 el.inner.addEventListener("click", (event) => {
   if (event.target.closest(".more")) return;
@@ -381,20 +388,32 @@ function renderConv(c, ctx, forceMeasure = false) {
     return;
   }
   // a selection that no longer exists falls back to the whole workspace
+  const origin = typeof ChatDerived !== "undefined" ? ChatDerived.originOf?.(c) : null;
   const d = state.drawer;
   if (
     (d.kind === "desk" && !ctx.desks.has(d.key)) ||
     (d.kind === "room" && !ctx.rooms.has(d.id)) ||
+    (d.kind === "origin" && !origin) ||
     (d.kind === "isolated" && !c.isolated?.length && !(typeof ChatIsolatedCleanup !== "undefined" && ChatIsolatedCleanup.doneCount(c.group)))
   )
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
   const desk = state.drawer.kind === "desk" ? state.drawer.key : null;
+  const parentDerivedDesk = Boolean(
+    !origin &&
+    desk &&
+    (ctx.desks.get(desk)?.derived || (typeof ChatTerminal !== "undefined" && ChatTerminal?.ofDesk?.(c.group, desk))),
+  );
+  if (el.drDerived) el.drDerived.hidden = !parentDerivedDesk;
   // Listening to a seat excludes the folded replies from its peers.
   AN.voice?.controls(true, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
     desk, desk ? chat => deskStream(chat.messages, contextOf(chat), desk).shown : null,
     desk ? chat => { const next = contextOf(chat); return chat.messages.filter(m => inDesk(m, desk, next)); } : null);
-  if (state.drawer.kind === "all") {
+  const directOrigin = Boolean(
+    origin &&
+    (state.drawer.kind === "origin" || (state.drawer.kind === "all" && !ChatDerived.hasDownstream(c))),
+  );
+  if (state.drawer.kind === "all" && !directOrigin) {
     if (typeof syncDerivedNotice === "function") syncDerivedNotice("");
     renderDirectory(c, ctx);
     return;
@@ -404,7 +423,7 @@ function renderConv(c, ctx, forceMeasure = false) {
     renderIsolatedDrawer(c, ctx);
     return;
   }
-  const scopeKey = c.group + JSON.stringify(state.drawer);
+  const scopeKey = c.group + JSON.stringify(state.drawer) + (directOrigin ? ":origin" : "");
   const reset = state.scopeKey !== scopeKey;
   if (reset) {
     state.scopeKey = scopeKey;
@@ -414,25 +433,59 @@ function renderConv(c, ctx, forceMeasure = false) {
     state.expanded.clear();
     el.inner.replaceChildren();
     el.tl.scrollTop = 0;
-    if (state.drawer.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(c.group, state.drawer.key);
+    if (directOrigin && typeof refreshDerivedTurns === "function") refreshDerivedTurns(origin.parentGroup, origin.deskKey);
+    else if (state.drawer.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(c.group, state.drawer.key);
   }
-  const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
-  state.peers = stream?.peers || new Set();
-  let combined = stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx));
+  let renderCtx = ctx;
+  let combined;
   let derivedNotice = "";
-  if (stream && typeof isDerivedDeskView === "function" && isDerivedDeskView(c, ctx, state.drawer.key)) {
-    const fetched = requestDerivedTurns(c, ctx, state.drawer.key);
-    if (fetched?.error) derivedNotice = fetched.error;
-    if (fetched?.turns?.length) {
-      combined = mergeDerivedMessages(
-        combined,
-        buildDerivedUserMessages(c, ctx.desks.get(state.drawer.key), state.drawer.key, fetched.turns),
-      );
+  if (directOrigin) {
+    state.peers = new Set();
+    renderCtx = {
+      ...ctx,
+      desks: new Map([...ctx.desks, [origin.deskKey, origin.desk]]),
+    };
+    combined = origin.messages || [];
+    if (typeof requestDerivedTurns === "function") {
+      const fetched = requestDerivedTurns(c, renderCtx, origin.deskKey, {
+        workspace: origin.parentGroup,
+        desk: origin.desk,
+        origin: true,
+      });
+      if (fetched?.error) derivedNotice = fetched.error;
+      if (fetched?.turns?.length) {
+        combined = mergeDerivedMessages(
+          combined,
+          buildDerivedUserMessages(c, origin.desk, origin.deskKey, fetched.turns),
+        );
+      }
+    }
+  } else {
+    const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
+    state.peers = stream?.peers || new Set();
+    combined = stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx));
+    if (stream && typeof isDerivedDeskView === "function" && isDerivedDeskView(c, ctx, state.drawer.key)) {
+      const fetched = requestDerivedTurns(c, ctx, state.drawer.key);
+      if (fetched?.error) derivedNotice = fetched.error;
+      if (fetched?.turns?.length) {
+        combined = mergeDerivedMessages(
+          combined,
+          buildDerivedUserMessages(c, ctx.desks.get(state.drawer.key), state.drawer.key, fetched.turns),
+        );
+      }
     }
   }
   if (typeof syncDerivedNotice === "function") syncDerivedNotice(derivedNotice);
   const shown = threaded(combined);
-  const head = scopeHead(c, ctx, shown);
+  const realCount = shown.filter((m) => m.kind !== "typing").length;
+  const head = directOrigin
+    ? {
+        key: `origin|${origin.parentGroup}|${origin.deskKey}|${deskChar(origin.desk)}`,
+        ico: () => ART.head(deskChar(origin.desk)),
+        title: L("派生对话", "Derived conversation"),
+        sub: L(`来自 ${origin.parentTitle} · ${realCount} 条消息`, `From ${origin.parentTitle} · ${realCount} messages`),
+      }
+    : scopeHead(c, renderCtx, shown);
   if (el.drIco.dataset.key !== head.key) {
     el.drIco.dataset.key = head.key;
     el.drIco.replaceChildren(head.ico());
@@ -443,7 +496,7 @@ function renderConv(c, ctx, forceMeasure = false) {
   el.drAll.hidden = state.drawer.kind === "all";
   setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
   const becameVisible = forceMeasure || (wasHidden && !el.drawer.hidden) || (wasFolded && !folded) || !wasVisible;
-  renderConversationMessages(shown, ctx, reset, becameVisible);
+  renderConversationMessages(shown, renderCtx, reset, becameVisible);
 }
 function renderConversationMessages(shown, ctx, reset, remeasure = false) {
   const L = AN.L || ((zh) => zh);
@@ -719,9 +772,7 @@ function applyHash(ctx) {
     // A link made while a task had no native session yet names its earlier task key.
     const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
     if (ctx.desks.has(desk)) {
-      const wantTerm = Boolean(ChatTerminal.consumeOpenDesk?.(state.chat?.group, desk));
-      openScope({ kind: "desk", key: desk }, null, wantTerm ? { terminal: true } : {});
-      if (wantTerm) ChatTerminal.focusFrame?.(ChatTerminal.ofDesk?.(state.chat?.group, desk)?.id);
+      openScope({ kind: "desk", key: desk });
     }
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
@@ -761,7 +812,7 @@ async function refresh() {
     for (const g of state.groupsData) {
       const own = ChatTerminal.derivedOf?.(g.group) || [];
       g.derived_live = own.some((d) => d.live);
-      g.derived_titles = own.map((d) => d.title).join("\n");
+      g.derived_titles = own.flatMap((d) => [d.title, d.group, d.desk_key]).filter(Boolean).join("\n");
     }
     const selectable = [...state.groupsData, ...derived];
     const followed = ChatTerminal.follow(state.selected);
@@ -776,8 +827,7 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const openDesk = state.drawer?.kind === "desk" ? state.drawer.key : null;
-    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, openDesk, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
@@ -794,14 +844,30 @@ async function refresh() {
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
     // An agent that has not dispatched has an office with only its boss, drawn here.
     const agent = ChatTerminal.pendingId(selected) != null;
+    const parsedDerived = ChatTerminal.parseDerivedRowId?.(selected) || null;
     if (!state.loaded && !agent) showBlank("loading");
     let chat;
     try {
-      chat = agent
-        ? ChatTerminal.office(selected)
-        : await load(
+      if (agent) {
+        chat = ChatTerminal.office(selected);
+      } else if (parsedDerived) {
+        try {
+          chat = await load(
+            `/app/derived?workspace=${encodeURIComponent(parsedDerived.parentGroup)}&desk=${encodeURIComponent(parsedDerived.deskKey)}`,
+          );
+          chat = ChatTerminal.decorateDerivedOffice?.(chat) || chat;
+        } catch (derivedErr) {
+          if (derivedErr?.status === 404) chat = ChatTerminal.office(selected);
+          else throw derivedErr;
+        }
+      } else {
+        chat = await load(
           `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
         );
+        if (typeof ChatDerived !== "undefined" && ChatDerived.isOffice?.(chat)) {
+          chat = ChatTerminal.decorateDerivedOffice?.(chat) || chat;
+        }
+      }
       if (selected !== state.selected || hashKey !== state.hashKey) {
         state.again = true;
         return;

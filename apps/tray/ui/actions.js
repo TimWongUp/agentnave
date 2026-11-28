@@ -67,7 +67,9 @@ const Actions = {};
   });
 
   const isDerivedRow = (id) =>
-    String(id).startsWith("term-") || (typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.isDerivedRowId?.(id)));
+    String(id).startsWith("term-") ||
+    (typeof ChatTerminal !== "undefined" &&
+      (Boolean(ChatTerminal?.isDerivedRowId?.(id)) || Boolean(ChatTerminal?.findDerivedRow?.(id))));
 
   // ---- picking several workspaces ----------------------------------------------------------
   function clearPicks() {

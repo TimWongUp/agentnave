@@ -210,8 +210,10 @@ function createBoss() {
     rec.desk,
     rec.laptop,
   );
-  // boss sits on the left; meetings sit beside it (or below on narrow floors)
-  rec.meets = h("div.boss-side");
+  // boss sits on the left; meetings and derived sessions sit beside it (or below on narrow floors)
+  rec.meetsSec = h("div.side-sec", { hidden: true });
+  rec.derivedSec = h("div.side-sec", { hidden: true });
+  rec.meets = h("div.boss-side", { hidden: true }, rec.meetsSec, rec.derivedSec);
   // Clicking the boss may open its terminal; this always opens every message of the workspace.
   const allMessages = h("button.boss-all", { type: "button" }, L("全部消息", "All messages"));
   allMessages.addEventListener("click", (e) => {
@@ -243,10 +245,10 @@ function drawerVisible() {
 }
 function activeSelection() {
   if (!drawerVisible()) return null;
-  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.())
-    return ChatTerminal.showingDerived?.() && state.drawer.kind === "desk" ? { kind: "desk", key: state.drawer.key } : { kind: "boss" };
+  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.()) return { kind: "boss" };
   if (el.drawer?.classList?.contains?.("term-mode")) return { kind: "boss" };
-  if (state.drawer.kind === "all") return { kind: "boss" };
+  if (!state.drawer) return null;
+  if (state.drawer.kind === "all" || state.drawer.kind === "origin") return { kind: "boss" };
   if (state.drawer.kind === "desk") return { kind: "desk", key: state.drawer.key };
   if (state.drawer.kind === "room") return { kind: "room", id: state.drawer.id };
   return null;
@@ -318,30 +320,37 @@ function renderBossState(rec, parts, tookOver, model) {
   return [...linkTexts, tookOver].filter(Boolean);
 }
 function updateBoss(rec, c, n) {
+  const derivedOffice = typeof ChatDerived !== "undefined" && Boolean(ChatDerived.isOffice?.(c));
+  const origin = derivedOffice ? ChatDerived.originOf?.(c) : null;
   const holder = seatHolder(c);
-  const model = holder.model;
+  const model = holder.model || (derivedOffice ? (origin?.desk?.model || "") : "");
   // Before any dispatch the figure wears the CLI's default model; only a reported model is named.
-  const artModel = !model && !holder.former && holder.host === c.host ? c.boss_art_model || "" : model;
+  const artModel = !holder.model && !holder.former && holder.host === c.host
+    ? (origin?.desk?.art_model || c.boss_art_model || model)
+    : model;
   dress(rec, ART.character(holder.host, artModel), rec.scene, rec.desk);
   dressBossSet(rec, c.host);
   dressLid(rec, c.app || c.host);
   hangPortrait(rec, c, holder.former);
-  const inTerminal = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.running?.(c.group));
-  const hasBossAct = typeof ChatTerminal !== "undefined" && typeof ChatTerminal?.bossActivity === "function";
-  const act = hasBossAct ? ChatTerminal.bossActivity(c.group) : (inTerminal ? "working" : null);
-  const blocked = act === "blocked";
-  const mood = blocked
-    ? "review"
-    : n.running || n.review || act === "working"
-      ? "working"
-      : recentlyActive(c)
-        ? "idle"
-        : "sleep";
-  el.boss.dataset.mood = mood;
-  setText(rec.cli, c.label);
-  setText(
-    rec.st,
-    blocked
+  let mood;
+  let statusText;
+  if (derivedOffice && ChatDerived.bossMood) {
+    const dm = ChatDerived.bossMood(c, n, recentlyActive(c));
+    mood = dm.mood;
+    statusText = dm.text;
+  } else {
+    const inTerminal = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.running?.(c.group));
+    const hasBossAct = typeof ChatTerminal !== "undefined" && typeof ChatTerminal?.bossActivity === "function";
+    const act = hasBossAct ? ChatTerminal.bossActivity(c.group) : (inTerminal ? "working" : null);
+    const blocked = act === "blocked";
+    mood = blocked
+      ? "review"
+      : n.running || n.review || act === "working"
+        ? "working"
+        : recentlyActive(c)
+          ? "idle"
+          : "sleep";
+    statusText = blocked
       ? L("等待确认", "Needs confirmation")
       : n.running
         ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`)
@@ -351,9 +360,15 @@ function updateBoss(rec, c, n) {
             ? L("工作中", "Working")
             : act === "unknown"
               ? L("终端运行中", "Terminal running")
-              : L("空闲", "Idle"),
-  );
-  const notes = renderBossState(rec, handoverParts(c), c.took_over, model);
+              : L("空闲", "Idle");
+  }
+  el.boss.dataset.mood = mood;
+  setText(rec.cli, c.label);
+  setText(rec.st, statusText);
+  const originParts = origin
+    ? [{ text: L(`派生自 ${origin.parentTitle}`, `Derived from ${origin.parentTitle}`), group: origin.parentGroup }]
+    : [];
+  const notes = renderBossState(rec, [...originParts, ...handoverParts(c)], c.took_over, model);
   const zhNote = notes.length ? `${notes.join("，")}，` : "";
   const enNote = notes.length ? `${notes.join(", ")}, ` : "";
   const hasTerm = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.bossOpensTerminal?.(c.group));
@@ -379,12 +394,13 @@ function hangPortrait(rec, c, former) {
 }
 
 // ---------------------------------------------------------------- beside the boss
-// Meetings (in session first, ended kept for reopening) beside the boss.
+// Meetings (in session first, ended kept for reopening) and derived sessions beside the boss.
 function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
   const meets = [...c.rooms]
     .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)) || recent(a, b))
     .map((r) => ({
+      kind: "room",
       scope: { kind: "room", id: r.id },
       heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
       name: r.title,
@@ -392,21 +408,44 @@ function sideItems(c, ctx) {
       tone: urgent(r.status) ? "run" : r.status === "failed" ? "bad" : "",
       time: r.last_active ? relTime(r.last_active) : "",
     }));
-  return { meets };
+  const derived = typeof ChatDerived !== "undefined" && ChatDerived.sideItems
+    ? ChatDerived.sideItems(c).map((item) => ({ ...item, kind: "derived" }))
+    : [];
+  return { meets, derived };
+}
+function isSideSelected(item, sel) {
+  if (!sel || !item.scope) return false;
+  if (item.scope.kind === "room") return sel.kind === "room" && sel.id === item.scope.id;
+  if (item.scope.kind === "desk") return sel.kind === "desk" && sel.key === item.scope.key;
+  return false;
 }
 function sideList(node, title, items) {
+  const sel = activeSelection();
   // A relative time is patched in place; it never rebuilds the list.
-  const key = JSON.stringify([title, items.map((item) => ({ ...item, time: Boolean(item.time) })), ART.version()]);
+  const key = JSON.stringify([
+    title,
+    items.map((item) => ({
+      id: item.id || item.scope?.id || item.scope?.key || item.name,
+      name: item.name,
+      sub: item.sub,
+      tone: item.tone,
+      sel: isSideSelected(item, sel),
+      heads: item.heads.slice(0, 3).map((d) => deskChar(d)),
+      time: Boolean(item.time),
+    })),
+    ART.version(),
+  ]);
   if (node.dataset.key === key) {
-    items.forEach((item, i) => node.times[i] && setText(node.times[i], item.time));
+    items.forEach((item, i) => node.times?.[i] && setText(node.times[i], item.time));
     return;
   }
   node.dataset.key = key;
   node.times = [];
   const rows = [];
   for (const item of items) {
+    const selected = isSideSelected(item, sel);
     const row = h(
-      `button.td-row${item.tone ? `.${item.tone}` : ""}`,
+      `button.td-row${item.tone ? `.${item.tone}` : ""}${selected ? ".sel" : ""}`,
       { type: "button", title: `${item.name}\n${item.sub}` },
       h("span.td-heads", {}, item.heads.slice(0, 3).map((d) => ART.head(deskChar(d)))),
       h("span.td-main", {}, h("span.td-name", {}, item.name), h("span.td-sub", {}, item.sub)),
@@ -414,12 +453,19 @@ function sideList(node, title, items) {
     );
     row.addEventListener("click", (e) => {
       e.stopPropagation();
-      openScope(item.scope, row);
+      if (item.kind === "derived" && typeof ChatDerived !== "undefined" && ChatDerived.openSideItem) {
+        ChatDerived.openSideItem(item, row);
+      } else if (item.scope) {
+        openScope(item.scope, row);
+      }
     });
-    if (item.scope.kind === "room") row.addEventListener("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
+    if (item.kind === "room" && item.scope?.id) {
+      row.addEventListener("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
+    } else if (item.kind === "derived" && typeof ChatDerived !== "undefined" && ChatDerived.sideMenu) {
+      row.addEventListener("contextmenu", (e) => ChatDerived.sideMenu(item, row, e));
+    }
     rows.push(row);
   }
-  // three rows show at once; the rest scroll inside the list
   const list = h("div.side-rows", {}, rows);
   const top = node.querySelector(".side-rows")?.scrollTop || 0;
   node.replaceChildren(
@@ -429,10 +475,24 @@ function sideList(node, title, items) {
   list.scrollTop = top;
 }
 function renderSides(rec, c, ctx) {
-  const { meets } = sideItems(c, ctx);
-  // an agent that never held a meeting shows the boss desk alone
-  rec.meets.hidden = !meets.length;
-  sideList(rec.meets, L("会议", "Meetings"), meets);
+  const { meets, derived } = sideItems(c, ctx);
+  const hasMeets = meets.length > 0;
+  const hasDerived = derived.length > 0;
+  rec.meets.hidden = !hasMeets && !hasDerived;
+  rec.meets.classList?.toggle?.("both", hasMeets && hasDerived);
+  rec.meetsSec.hidden = !hasMeets;
+  rec.derivedSec.hidden = !hasDerived;
+  if (hasMeets) sideList(rec.meetsSec, L("会议", "Meetings"), meets);
+  else {
+    rec.meetsSec.dataset.key = "";
+    rec.meetsSec.replaceChildren?.();
+  }
+  if (hasDerived) sideList(rec.derivedSec, L("派生", "Derived"), derived);
+  else {
+    rec.derivedSec.dataset.key = "";
+    rec.derivedSec.replaceChildren?.();
+  }
+  return { meets: meets.length, derived: derived.length };
 }
 
 // ---------------------------------------------------------------- desks
@@ -480,17 +540,7 @@ function createDesk(d) {
   rec.d = d;
   rec.el.addEventListener("click", () => {
     const current = rec.d || d;
-    if (current.derived && typeof ChatDerived !== "undefined" && ChatDerived.openDesk) {
-      ChatDerived.openDesk(current, rec.el);
-      return;
-    }
     openScope({ kind: "desk", key: current.key }, rec.el);
-  });
-  rec.el.addEventListener("contextmenu", (e) => {
-    const current = rec.d || d;
-    if (current.derived && typeof ChatDerived !== "undefined" && ChatDerived.deskMenu) {
-      ChatDerived.deskMenu(current, rec.el, e);
-    }
   });
   return rec;
 }
@@ -653,7 +703,7 @@ function updateRoom(rec, r, ctx) {
 const DESK_FRAME = 18; // a desk's side padding and border around its scene
 const DESK_PAD = 16; // the same padding alone, inside the card's border
 function deskSceneWidth() {
-  const desk = el.desks.querySelector(".desk") || el.derivedDesks?.querySelector?.(".desk");
+  const desk = el.desks.querySelector(".desk");
   if (desk) return desk.clientWidth - DESK_PAD;
   const grid = getComputedStyle(el.desks);
   const cols = parseInt(grid.getPropertyValue("--cols"), 10) || 1;
@@ -687,13 +737,12 @@ function layoutRooms() {
   if ((state.deskCap ?? "") !== cap) {
     state.deskCap = cap;
     el.desks.style.setProperty("--desk-scene", cap);
-    el.derivedDesks?.style?.setProperty("--desk-scene", cap);
   }
   const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * BOSS_SCALE)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
     state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.
-  const fig = (el.desks.querySelector(".desk > .scene > .fig") || el.derivedDesks?.querySelector?.(".desk > .scene > .fig"))?.offsetWidth || FIG;
+  const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
     const m = rec.scene;
     if (!m.isConnected) continue;
@@ -763,8 +812,6 @@ function renderOffice(c, ctx, n, newGroup) {
       map.clear();
     state.bossRec = null;
     el.desks.replaceChildren();
-    el.derivedDesks?.replaceChildren?.();
-    if (el.derivedZone) el.derivedZone.hidden = true;
     el.rooms.replaceChildren();
     el.office.scrollTop = 0;
     laidOutFor = "";
@@ -811,33 +858,30 @@ function renderOffice(c, ctx, n, newGroup) {
     if (!live.has(id)) state.seatRecs.delete(id);
   const removedRoom = !newGroup && (el.rooms.children?.length || 0) > roomNodes.length;
   if (removedRoom && globalThis.ANMotion?.flipY) {
-    globalThis.ANMotion.flipY([...roomNodes, el.desksZone, el.derivedZone], () => reconcile(el.rooms, roomNodes));
+    globalThis.ANMotion.flipY([...roomNodes, el.desksZone], () => reconcile(el.rooms, roomNodes));
   } else {
     reconcile(el.rooms, roomNodes);
   }
 
   for (const key of state.deskRecs.keys())
     if (!ctx.drawn.has(key)) state.deskRecs.delete(key);
-  const splitDerived = typeof ChatDerived !== "undefined" && ChatDerived.renderZone;
-  const regularDesks = splitDerived ? c.desks.filter((d) => !d.derived) : c.desks;
-  const derivedDesks = splitDerived ? c.desks.filter((d) => d.derived) : [];
+  const regularDesks = c.desks.filter((d) => !d.derived);
   const deskNodes = regularDesks.map((d) => {
     let rec = state.deskRecs.get(d.key);
     if (!rec) state.deskRecs.set(d.key, (rec = createDesk(d)));
     updateDesk(rec, d, ctx);
     return rec.el;
   });
-  // With only derived desks below there is nothing to put in this zone, so the zone is not drawn.
-  const onlyDerived = derivedDesks.length > 0 && !regularDesks.length && !c.optimized?.count;
+  const sideCounts = renderSides(state.bossRec, c, ctx);
+  // With only derived sessions beside the boss there is nothing to put in open desks, so hide the empty zone.
+  const onlyDerived = sideCounts.derived > 0 && !regularDesks.length && !c.optimized?.count;
   if (el.desksZone) el.desksZone.hidden = onlyDerived;
   if (!deskNodes.length)
     deskNodes.push(h("div.zone-empty", {}, L("boss 派活后，工位出现在这里", "Desks appear here once boss dispatches work")));
   if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, regularDesks.length ? ` · ${regularDesks.length}` : "");
-  if (splitDerived) ChatDerived.renderZone(derivedDesks, ctx, { createDesk, updateDesk });
-  renderSides(state.bossRec, c, ctx);
-  layoutIfChanged(JSON.stringify([regularDesks.length, derivedDesks.length, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
+  layoutIfChanged(JSON.stringify([regularDesks.length, sideCounts.meets, sideCounts.derived, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
   walk(!newGroup && state.ready, sat);
 }
 

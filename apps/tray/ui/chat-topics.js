@@ -69,6 +69,24 @@ const tpBad = (m) => m?.kind === "notice" && AN.pick(AN.MEMBER, m.status)[1] ===
 function tpDirectory(c, ctx) {
   const topics = tpTopics(c.messages);
   const items = [];
+  const origin = typeof ChatDerived !== "undefined" ? ChatDerived.originOf?.(c) : null;
+  if (origin) {
+    const originMsgs = origin.messages || [];
+    const lastOrigin = [...originMsgs].reverse().find((m) => m.kind === "reply" || m.kind === "typing" || m.kind === "notice") || originMsgs.at(-1);
+    const firstOrigin = originMsgs.find((m) => m.kind === "prompt");
+    const runningOrigin = originMsgs.some((m) => m.kind === "typing") || origin.desk?.status === "running";
+    items.push({
+      weight: -1,
+      time: lastOrigin?.time || origin.desk?.last_active || "",
+      tag: AN.L("主对话", "Main"),
+      title: AN.L("派生对话", "Derived conversation"),
+      status: runningOrigin ? [AN.L("进行中", "Running"), "run"] : null,
+      faces: origin.desk ? [ART.head(deskChar(origin.desk))] : [],
+      meta: AN.L(`来自 ${origin.parentTitle}`, `From ${origin.parentTitle}`),
+      line: lastOrigin ? tpSummary(lastOrigin) : firstOrigin ? tpFirst(firstOrigin.text) : "",
+      scope: { kind: "origin" },
+    });
+  }
   for (const room of ctx.rooms.values()) {
     const last = topics.filter((t) => t.kind === "round" && t.conversation === room.id).at(-1);
     const failed = room.status === "failed" || last?.replies.some(tpBad);
@@ -100,7 +118,7 @@ function tpDirectory(c, ctx) {
     items.push({
       weight: running ? 1 : 2,
       time: t.time,
-      tag: AN.L("任务", "Task"),
+      tag: desk?.derived ? AN.L("派生", "Derived") : AN.L("任务", "Task"),
       title: tpFirst(t.prompt.text),
       status: bad ? [AN.L("失败", "Failed"), "bad"] : running ? [AN.L("进行中", "Running"), "run"] : last ? [AN.L("已完成", "Done"), "done"] : [AN.L("等待中", "Pending"), "idle"],
       faces: desk ? [ART.head(deskChar(desk))] : [],
@@ -195,9 +213,17 @@ function renderDirectory(c, ctx) {
     document.documentElement.lang, c.group, c.handover, AN.chatName(c),
     Array.isArray(c.conversations) ? c.conversations.length : Boolean(c.conversations),
     ART.version(),
+    c.derived_origin
+      ? [
+          c.derived_origin.parent_workspace_id,
+          c.derived_origin.parent_title,
+          c.derived_origin.desk?.status,
+          (c.derived_origin.messages || []).map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length]),
+        ]
+      : null,
     c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing, m.speaker?.identity, m.speaker?.effort]),
     [...ctx.rooms.values()].map((r) => [r.id, r.title, r.status, r.pending_review]),
-    [...ctx.desks.values()].map((d) => [d.key, deskName(d)]),
+    [...ctx.desks.values()].map((d) => [d.key, deskName(d), Boolean(d.derived)]),
     c.omitted,
   ]);
   if (tp.key === key && el.inner.querySelector(".tp-card, .dr-empty")) return;

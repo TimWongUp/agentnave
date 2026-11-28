@@ -1,5 +1,5 @@
 //! Read-only mapping from derived sessions' native boss identity (`boss_key`) to their own
-//! subagent workspaces (ADR-0128 §5).
+//! subagent workspaces and derived-office projections (ADR-0128 §5, ADR-0130).
 
 #[cfg(test)]
 mod tests;
@@ -8,7 +8,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Value, json};
 
+use super::{Group, color, label};
 use crate::data::boss_app::boss_key;
+use crate::data_files::valid_id;
+use crate::response::Response;
 use crate::terminal::thread_desk_key;
 
 /// Workspace ownership and derived-session boss keys read from SQLite without schema changes.
@@ -16,6 +19,24 @@ use crate::terminal::thread_desk_key;
 pub(crate) struct DerivedHierarchy {
     pub(crate) workspace_owners: BTreeMap<String, String>,
     pub(crate) derived_boss_keys: BTreeMap<(String, String), String>,
+}
+
+impl DerivedHierarchy {
+    /// Returns `(parent_workspace_id, parent_desk_key)` when `group_id` is a first-level derived
+    /// subagent workspace; respects the one-level nesting invariant (ADR-0109, ADR-0128, ADR-0130).
+    pub(crate) fn parent_of(&self, group_id: &str) -> Option<(&str, &str)> {
+        let owner = self.workspace_owners.get(group_id)?;
+        let ((parent_ws, parent_desk), _) = self
+            .derived_boss_keys
+            .iter()
+            .find(|((p_ws, _), bk)| *bk == owner && p_ws != group_id)?;
+        let parent_is_nested = self.workspace_owners.get(parent_ws).is_some_and(|p_owner| {
+            self.derived_boss_keys
+                .iter()
+                .any(|((pp, _), bk)| bk == p_owner && pp != parent_ws)
+        });
+        (!parent_is_nested).then_some((parent_ws.as_str(), parent_desk.as_str()))
+    }
 }
 
 pub(crate) fn read_hierarchy(connection: Option<&rusqlite::Connection>) -> DerivedHierarchy {
@@ -102,6 +123,7 @@ pub(super) fn enrich_groups_value(groups: &mut [Value], hierarchy: &DerivedHiera
             .get(parent_ws)
             .is_some_and(|p_owner| by_boss_key.contains_key(p_owner))
     };
+    let mut primary_child: HashMap<(String, String), String> = HashMap::new();
     for g in groups.iter_mut() {
         let Some(gid) = g["group"].as_str().map(str::to_owned) else {
             continue;
@@ -116,6 +138,25 @@ pub(super) fn enrich_groups_value(groups: &mut [Value], hierarchy: &DerivedHiera
         {
             g["parent_workspace_id"] = json!(parent_ws);
             g["parent_desk_key"] = json!(parent_desk);
+            if g["handover"] != "pending" {
+                primary_child
+                    .entry((parent_ws.clone(), parent_desk.clone()))
+                    .or_insert(gid);
+            }
+        }
+    }
+    for g in groups.iter_mut() {
+        let Some(gid) = g["group"].as_str().map(str::to_owned) else {
+            continue;
+        };
+        if let Some(derived) = g["derived"].as_array_mut() {
+            for d in derived {
+                if let Some(d_key) = d["key"].as_str()
+                    && let Some(child_id) = primary_child.get(&(gid.clone(), d_key.to_owned()))
+                {
+                    d["child_workspace_id"] = json!(child_id);
+                }
+            }
         }
     }
 }
@@ -129,24 +170,175 @@ pub(super) fn enrich_requested_group(
         return;
     };
     value["owner"] = json!(owner);
-    let Some(((parent_ws, parent_desk), _)) = hierarchy
-        .derived_boss_keys
-        .iter()
-        .find(|((p_ws, _), bk)| *bk == owner && p_ws != group_id)
-    else {
-        return;
-    };
-    let parent_is_nested = hierarchy
-        .workspace_owners
-        .get(parent_ws)
-        .is_some_and(|p_owner| {
-            hierarchy
-                .derived_boss_keys
-                .iter()
-                .any(|((pp, _), bk)| bk == p_owner && pp != parent_ws)
-        });
-    if !parent_is_nested {
+    if let Some((parent_ws, parent_desk)) = hierarchy.parent_of(group_id) {
         value["parent_workspace_id"] = json!(parent_ws);
         value["parent_desk_key"] = json!(parent_desk);
     }
+}
+
+/// Encodes a token identically to `chat-terminal.js`'s `encodeToken` for stable `drv-` IDs.
+fn encode_token(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            out.push(char::from(byte));
+        } else if matches!(
+            byte,
+            b'_' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')' | b'.' | b'-'
+        ) {
+            out.push_str(&format!("_{byte:02x}"));
+        } else {
+            out.push_str(&format!("_{byte:02X}"));
+        }
+    }
+    out
+}
+
+pub(super) fn derived_row_id(parent_ws: &str, desk_key: &str) -> String {
+    format!("drv-{}-{}", encode_token(parent_ws), encode_token(desk_key))
+}
+
+fn message_belongs_to_desk(message: &Value, desk_key: &str) -> bool {
+    message["desk"].as_str() == Some(desk_key)
+        || (message["thread"]["kind"] == "desk"
+            && message["thread"]["key"].as_str() == Some(desk_key))
+        || message["to"].as_array().is_some_and(|arr| {
+            arr.iter()
+                .any(|item| item["key"].as_str() == Some(desk_key))
+        })
+}
+
+/// Projects the parent workspace context and upstream messages of a derived session desk.
+pub(super) fn build_derived_origin(parent: &Group, desk_key: &str) -> Option<Value> {
+    let desk = parent.desks.get(desk_key)?;
+    let parent_header = parent.header();
+    let parent_host = parent_header["host"].as_str();
+    let parent_title = parent_header["display_title"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| parent_header["title"].as_str())
+        .unwrap_or_default();
+    let parent_label = parent_header["label"].as_str().unwrap_or_default();
+    let messages: Vec<Value> = parent
+        .timeline(None, true)
+        .into_iter()
+        .filter(|msg| message_belongs_to_desk(msg, desk_key))
+        .collect();
+    Some(json!({
+        "parent_workspace_id": parent.id,
+        "parent_desk_key": desk_key,
+        "parent_title": parent_title,
+        "parent_label": parent_label,
+        "desk": desk.value(parent_host),
+        "messages": messages,
+    }))
+}
+
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then_some(v)
+    })
+}
+
+/// Parses `/app/derived?workspace=<parent>&desk=<desk>`, returning `None` for other routes.
+pub(crate) fn requested_derived(path: &str) -> Option<Result<(String, String), &'static str>> {
+    let query = if path == "/app/derived" {
+        ""
+    } else {
+        path.strip_prefix("/app/derived?")?
+    };
+    let Some(ws_raw) = query_param(query, "workspace") else {
+        return Some(Err("需要有效的工作区 ID 和工位"));
+    };
+    let Some(desk_raw) = query_param(query, "desk") else {
+        return Some(Err("需要有效的工作区 ID 和工位"));
+    };
+    let Some(ws) = crate::usage::percent_decode(ws_raw) else {
+        return Some(Err("需要有效的工作区 ID 和工位"));
+    };
+    let Some(desk) = crate::usage::percent_decode(desk_raw) else {
+        return Some(Err("需要有效的工作区 ID 和工位"));
+    };
+    if !valid_id(&ws)
+        || desk.is_empty()
+        || desk.len() > 256
+        || desk.bytes().any(|b| b < 0x20 || b == 0x7f)
+    {
+        return Some(Err("需要有效的工作区 ID 和工位"));
+    }
+    Some(Ok((ws, desk)))
+}
+
+/// Builds the read-only derived-office payload for a derived session without a child workspace.
+pub(super) fn derived_office_response(
+    parent: &Group,
+    desk_key: &str,
+    hierarchy: Option<&DerivedHierarchy>,
+) -> Response {
+    let Some(desk) = parent.desks.get(desk_key) else {
+        return Response::error(404, "not found");
+    };
+    if !desk.derived.is_some_and(|(_, derived)| derived) {
+        return Response::error(404, "not found");
+    }
+    let Some(origin) = build_derived_origin(parent, desk_key) else {
+        return Response::error(404, "not found");
+    };
+    let parent_header = parent.header();
+    let group_id = derived_row_id(&parent.id, desk_key);
+    let provider = desk.provider.as_str();
+    let cli_label = label(Some(provider));
+    let title = desk
+        .identity
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .or_else(|| (!desk.model.is_empty()).then_some(desk.model.as_str()))
+        .unwrap_or(cli_label);
+    let owner = hierarchy
+        .and_then(|h| {
+            h.derived_boss_keys
+                .get(&(parent.id.clone(), desk_key.to_owned()))
+        })
+        .cloned();
+    Response::json(&json!({
+        "group": group_id,
+        "derived": true,
+        "host": provider,
+        "app": Value::Null,
+        "label": cli_label,
+        "title": title,
+        "display_title": Value::Null,
+        "boss_art_model": desk.art_model(),
+        "title_id": Value::Null,
+        "handover": Value::Null,
+        "took_over": Value::Null,
+        "previous_host": Value::Null,
+        "previous_label": Value::Null,
+        "handover_to": [],
+        "handover_from": [],
+        "project": parent.project_name,
+        "project_key": parent_header["project_key"],
+        "project_label": parent_header["project_label"],
+        "project_path": parent_header["project_path"],
+        "color": color(&group_id),
+        "live": desk.active,
+        "status": desk.status(),
+        "isolated_count": 0,
+        "owner": owner,
+        "parent_workspace_id": parent.id,
+        "parent_desk_key": desk_key,
+        "derived_origin": origin,
+        "conversations": [],
+        "members": [],
+        "isolated": [],
+        "desks": [],
+        "optimized": { "count": 0, "desks": [] },
+        "rooms": [],
+        "messages": [],
+        "boss_messages": [],
+        "omitted": 0,
+        "threads": [],
+    }))
 }

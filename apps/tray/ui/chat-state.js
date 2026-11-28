@@ -86,9 +86,6 @@ const el = {
   boss: $("boss"),
   desks: $("desks"),
   desksZone: $("desks")?.closest(".desks-zone"),
-  derivedZone: $("derived-zone"),
-  derivedDesks: $("derived-desks"),
-  derivedCount: $("derived-count"),
   rooms: $("rooms"),
   fx: $("fx"),
   deskCount: $("desks-count"),
@@ -101,6 +98,7 @@ const el = {
   drTitle: $("dr-title"),
   drSub: $("dr-sub"),
   drAll: $("dr-all"),
+  drDerived: $("dr-derived"),
   tl: $("timeline"),
   inner: $("tl-inner"),
   blank: $("blank"),
@@ -271,10 +269,7 @@ function createItem(g) {
     e.preventDefault();
     if (!Actions.pick(rec.id, e)) {
       if (ChatTerminal.openDerived?.(rec.id)) return;
-      // The boss row of the office whose derived desk is open leads back to boss.
-      const back = state.loaded === rec.id && selectedDerivedDeskKey();
       go(`/chat/${rec.id}`);
-      if (back && !ChatTerminal.openBoss?.()) openScope({ kind: "all" });
     }
   });
   const openIsolated = (e) => {
@@ -293,40 +288,23 @@ function createItem(g) {
   rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
-function selectedDerivedDeskKey() {
-  if (typeof state === "undefined" || state.drawer?.kind !== "desk" || !state.drawer.key) return null;
-  if (typeof el !== "undefined") {
-    if (el.drawer?.hidden) return null;
-    if (el.drawer?.classList?.contains?.("folded") && !state.convPeek) return null;
-  }
-  const key = state.drawer.key;
-  if (state.ctx?.desks?.get?.(key)?.derived) return key;
-  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.derivedOf?.(state.selected)?.some((d) => d.desk_key === key)) {
-    return key;
-  }
-  return null;
-}
 const isDerivedItem = (g) => g?.derived === true;
-function isItemOn(g, deskKey = selectedDerivedDeskKey()) {
-  if (isDerivedItem(g)) {
-    return Boolean(deskKey && g.parent_workspace_id === state.selected && g.desk_key === deskKey) || g.group === state.selected;
-  }
-  return g.group === state.selected && !deskKey;
+// Sidebar highlight strictly tracks the office currently shown in the center canvas (ADR-0130).
+function isItemOn(g) {
+  return g.group === state.selected;
 }
 function syncListSelection() {
   if (typeof state === "undefined" || !state.items) return;
-  const deskKey = selectedDerivedDeskKey();
   for (const rec of state.items.values()) {
     if (!rec.g) continue;
-    const on = isItemOn(rec.g, deskKey);
+    const on = isItemOn(rec.g);
     rec.el.classList?.toggle?.("on", on);
     setAttr(rec.el, "aria-current", on ? "true" : null);
   }
 }
-function updateItem(rec, g, flat = false, level = 0) {
+function updateItem(rec, g, flat = false) {
   rec.g = g;
   const isChild = isDerivedItem(g);
-  const isGrandchild = !isChild && level === 2;
   // A failure asks nothing of the user, so the list does not call it out.
   const dMeta = isChild ? ChatTerminal.derivedMeta(g) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
@@ -337,7 +315,7 @@ function updateItem(rec, g, flat = false, level = 0) {
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${isChild || isGrandchild ? " gi-child" : ""}${isGrandchild ? " gi-grandchild" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(isChild ? ChatTerminal.rowPath(g) : `/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
@@ -450,44 +428,45 @@ function mustShowOwn(g) {
     isGroupPinned(g.group)
   );
 }
+function derivedStaysVisible(d) {
+  return Boolean(
+    d.terminal != null ||
+    d.live ||
+    isItemOn(d) ||
+    d.child_status === "running" ||
+    d.child_status === "review",
+  );
+}
 function mustShow(g) {
   if (mustShowOwn(g)) return true;
   const derived = ChatTerminal.derivedOf?.(g.group) || [];
-  if (derived.some((d) => d.terminal != null)) return true;
-  return derived.some((d) =>
-    (ChatTerminal.derivedChildrenOf?.(g.group, d.desk_key) || []).some(mustShowOwn),
-  );
+  return derived.some(derivedStaysVisible);
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
 function stayVisibleWhenFolded(g) {
   return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
 }
-function itemNode(g, folded, flat = false, level = 0) {
+function itemNode(g, folded, flat = false) {
   let rec = state.items.get(g.group);
   if (!rec) state.items.set(g.group, (rec = createItem(g)));
-  updateItem(rec, g, flat, level);
+  updateItem(rec, g, flat);
   setAttr(rec.el, "data-folded", folded ? "true" : null);
   return rec.el;
 }
 function partitionNested(groups) {
   const present = new Set(groups.map((g) => g.group));
-  const children = new Map();
   const nestedIds = new Set();
   for (const parent of groups) {
-    if (parent.handover === "pending") continue;
+    if (parent.handover === "pending" || parent.parent_workspace_id) continue;
     for (const d of ChatTerminal.derivedOf?.(parent.group) || []) {
-      const matched = (ChatTerminal.derivedChildrenOf?.(parent.group, d.desk_key) || []).filter((child) =>
-        present.has(child.group),
-      );
-      if (matched.length) {
-        children.set(`${parent.group}|${d.desk_key}`, matched);
-        for (const child of matched) nestedIds.add(child.group);
+      if (d.child_workspace_id && present.has(d.child_workspace_id)) nestedIds.add(d.child_workspace_id);
+      for (const child of ChatTerminal.derivedChildrenOf?.(parent.group, d.desk_key) || []) {
+        if (present.has(child.group)) nestedIds.add(child.group);
       }
     }
   }
   return {
     topGroups: nestedIds.size ? groups.filter((g) => !nestedIds.has(g.group)) : groups,
-    children,
   };
 }
 function isFolded(id) {
@@ -593,20 +572,16 @@ function flatNodes(groups, { prefs, query }) {
   const nodes = [];
   const order = [];
   const searching = Boolean(query && query.trim());
-  const arranged = ChatGroups.arrangeFlat(groups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
-  const { topGroups: items, children: childMap } = partitionNested(arranged);
+  const { topGroups } = partitionNested(groups);
+  const items = ChatGroups.arrangeFlat(topGroups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
   const limit = searching ? Infinity : ChatGroups.caps.groups * ChatGroups.caps.items + state.moreFlat;
   const shown = ChatGroups.capped ? ChatGroups.capped(items, limit, mustShow) : items;
   for (const g of shown) {
     nodes.push(itemNode(g, false, true));
     order.push(g.group);
     for (const child of ChatTerminal.derivedOf?.(g.group) || []) {
-      nodes.push(itemNode(child, false, true, 1));
+      nodes.push(itemNode(child, false, true));
       order.push(child.group);
-      for (const gk of childMap.get(`${g.group}|${child.desk_key}`) || []) {
-        nodes.push(itemNode(gk, false, true, 2));
-        order.push(gk.group);
-      }
     }
   }
   if (items.length > shown.length) {
@@ -628,7 +603,7 @@ function groupedNodes(groups, { prefs, query } = {}) {
   const order = [];
   const live = new Set();
   const searching = Boolean(query && query.trim());
-  const { topGroups, children: fullChildMap } = searching ? { topGroups: groups, children: new Map() } : partitionNested(groups);
+  const { topGroups } = partitionNested(groups);
   const sections = ChatGroups.arrange(topGroups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
   const { sections: kept, hiddenGroups } = ChatGroups.capSections(sections, {
     groupLimit: searching ? Infinity : ChatGroups.caps.groups + state.moreGroups,
@@ -640,34 +615,17 @@ function groupedNodes(groups, { prefs, query } = {}) {
     live.add(id);
     const folded = searching ? false : isFolded(id);
     nodes.push(headNode(section, folded));
-    const searchChildMap = searching ? partitionNested(section.shown).children : null;
-    const childMap = searchChildMap || fullChildMap;
-    const nestedInSection = searching
-      ? new Set([...childMap.values()].flat().map((c) => c.group))
-      : null;
     for (const g of section.shown) {
-      if (nestedInSection?.has(g.group)) continue;
       const children = ChatTerminal.derivedOf?.(g.group) || [];
-      const hasTermChildren = children.some((d) => d.terminal != null);
-      const hasVisibleGrandchild = children.some((d) =>
-        (childMap.get(`${g.group}|${d.desk_key}`) || []).some(stayVisibleWhenFolded),
-      );
-      // A folded group still shows what needs the reader, is open, or has a derived terminal.
-      const hidden = folded && !(stayVisibleWhenFolded(g) || hasTermChildren || hasVisibleGrandchild);
+      const hasVisibleChild = children.some(derivedStaysVisible);
+      // A folded group still shows what needs the reader, is open, or has an active/live derived session.
+      const hidden = folded && !(stayVisibleWhenFolded(g) || hasVisibleChild);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
-      const deskKey = selectedDerivedDeskKey();
       for (const child of children) {
-        const gks = childMap.get(`${g.group}|${child.desk_key}`) || [];
-        const childHasVisibleGk = gks.some(stayVisibleWhenFolded);
-        const childHidden = folded && child.terminal == null && !isItemOn(child, deskKey) && !childHasVisibleGk;
-        nodes.push(itemNode(child, childHidden, false, 1));
+        const childHidden = folded && !derivedStaysVisible(child);
+        nodes.push(itemNode(child, childHidden, false));
         if (!childHidden) order.push(child.group);
-        for (const gk of gks) {
-          const gkHidden = folded && !stayVisibleWhenFolded(gk);
-          nodes.push(itemNode(gk, gkHidden, false, 2));
-          if (!gkHidden) order.push(gk.group);
-        }
       }
     }
     if (section.hidden)

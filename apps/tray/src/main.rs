@@ -263,7 +263,10 @@ fn register_protocol(
             // These routes read their query.
             path if matches!(
                 path,
-                "/app/storage/preview" | "/app/accounts/status" | "/app/decision-models"
+                "/app/storage/preview"
+                    | "/app/accounts/status"
+                    | "/app/decision-models"
+                    | "/app/derived"
             ) || path.starts_with("/app/terminal/") =>
             {
                 request

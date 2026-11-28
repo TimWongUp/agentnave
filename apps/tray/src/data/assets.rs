@@ -65,7 +65,12 @@ impl Reader {
                 None => Response::not_found(),
             };
         }
-        if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
+        if path == "/app/stage"
+            || path == "/app/chats"
+            || path.starts_with("/app/chats/")
+            || path == "/app/derived"
+            || path.starts_with("/app/derived?")
+        {
             return self.route(path);
         }
         if path == "/app/characters" {
@@ -393,9 +398,17 @@ fn chat_asset(resource: &str) -> Response {
         ),
 
         "" => page(CHAT_HTML),
-        id if valid_id(id) => page(CHAT_HTML),
+        id if valid_id(id) || is_derived_route_id(id) => page(CHAT_HTML),
         _ => Response::not_found(),
     }
+}
+
+fn is_derived_route_id(id: &str) -> bool {
+    id.starts_with("drv-")
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn panel_asset(resource: &str) -> Response {

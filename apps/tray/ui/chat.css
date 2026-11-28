@@ -92,7 +92,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.kbd-active:not(.on):not(.picked) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .gi.on { background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .gi.gi-child { margin-left: 16px; min-height: 38px; padding: 4px 10px 4px 14px; }
-.gi.gi-child.gi-grandchild { margin-left: 30px; min-height: 36px; }
 .gi.gi-child .gi-host { width: 24px; height: 24px; }
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
@@ -198,7 +197,6 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
   .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
-  .app[data-side-peek] .gi.gi-child.gi-grandchild { margin-left: 30px; }
 }
 
 /* ---- floor ---- */
@@ -245,6 +243,11 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 .boss-mid { min-width: max-content; }
 .boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 2px 0 2px 20px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; cursor: default; }
 .boss-side[hidden] { display: none; }
+.boss-side .side-sec { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.boss-side .side-sec[hidden] { display: none; }
+.boss-side.both { gap: 8px; }
+.boss-side.both .side-sec + .side-sec { padding-top: 8px; border-top: 1px solid var(--line); }
+.boss-side.both .side-rows { max-height: calc(46px * 2 + 2px); }
 .boss-row:has(> .boss-side[hidden]) { grid-template-columns: auto; }
 /* chat-office.js stacks the meetings under the boss when beside it the boss would have to shrink */
 .boss-row.stack { grid-template-columns: minmax(0, 1fr); justify-items: center; }
@@ -556,9 +559,10 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 /* ---- meetings beside the boss ---- */
 .td-h { display: flex; align-items: center; gap: 5px; margin: 0 0 2px; padding: 0 6px; font-size: 11px; font-weight: 650; color: var(--muted); }
 .td-h b { font-weight: 650; color: var(--faint); }
-.td-row.run .td-sub { color: var(--run); } .td-row.bad .td-sub { color: var(--bad); }
+.td-row.run .td-sub { color: var(--run); } .td-row.review .td-sub { color: var(--review); } .td-row.bad .td-sub { color: var(--bad); }
 .td-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 5px 6px; border: 0; border-radius: 9px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .td-row:hover { background: var(--card-hover); }
+.td-row.sel { background: var(--card-hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .td-heads { flex: none; display: flex; padding-right: 7px; }
 .td-heads .head { width: 24px; height: 24px; margin-right: -7px; border-radius: 27%; background: var(--surface) center / cover; box-shadow: 0 0 0 2px var(--surface); }
 .td-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -645,8 +649,10 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .dr-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dr-title { font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dr-sub { min-height: 18px; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dr-all { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-.dr-all:hover { color: var(--ink); background: var(--card-hover); }
+.dr-all, .dr-derived { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.dr-all:hover, .dr-derived:hover { color: var(--ink); background: var(--card-hover); }
+.dr-derived { color: var(--accent); }
+.dr-derived[hidden] { display: none; }
 .dr-close { display: none; flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
 .dr-close:hover { background: var(--card-hover); color: var(--ink); }
 .dr-empty { padding: 40px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
@@ -770,7 +776,6 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 5px 10px; }
   .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
-  .gi.gi-child.gi-grandchild { margin-left: 30px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }

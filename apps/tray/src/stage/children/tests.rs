@@ -53,16 +53,56 @@ fn links_subagent_workspace_under_derived_boss_and_keeps_one_level() {
     enrich_groups_value(&mut groups, &hierarchy);
 
     assert_eq!(groups[0]["derived"][0]["boss_key"], derived_bk);
+    assert_eq!(groups[0]["derived"][0]["child_workspace_id"], "s-child");
     assert_eq!(groups[1]["owner"], derived_bk);
     assert_eq!(groups[1]["parent_workspace_id"], "s-boss");
     assert_eq!(groups[1]["parent_desk_key"], derived_desk);
 
-    // One-level invariant: a child under an already nested workspace is NOT nested a third level.
+    // One-level invariant: a child under an already nested workspace is NOT nested a third level
+    // and does not get a child_workspace_id on the second-level derived entry.
     assert!(groups[2]["parent_workspace_id"].is_null());
+    assert!(groups[1]["derived"][0]["child_workspace_id"].is_null());
 
     let mut detail = json!({"group": "s-child"});
     enrich_requested_group(&mut detail, "s-child", &hierarchy);
     assert_eq!(detail["owner"], derived_bk);
     assert_eq!(detail["parent_workspace_id"], "s-boss");
     assert_eq!(detail["parent_desk_key"], derived_desk);
+}
+
+#[test]
+fn requested_derived_validates_workspace_and_desk_query_params() {
+    use super::requested_derived;
+
+    assert!(requested_derived("/app/chats").is_none());
+    assert!(requested_derived("/app/chats/ws-1").is_none());
+    assert!(requested_derived("/app/derived").unwrap().is_err());
+    assert!(
+        requested_derived("/app/derived?workspace=ws-1")
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        requested_derived("/app/derived?workspace=../bad&desk=thread%3As1")
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        requested_derived("/app/derived?workspace=ws-1&desk=")
+            .unwrap()
+            .is_err()
+    );
+    let (ws, desk) = requested_derived("/app/derived?workspace=s-boss&desk=thread%3Aclaude%3As1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(ws, "s-boss");
+    assert_eq!(desk, "thread:claude:s1");
+}
+
+#[test]
+fn derived_row_id_matches_js_encode_token_format() {
+    assert_eq!(
+        super::derived_row_id("ws-hist", "thread:saved"),
+        "drv-ws_2dhist-thread_3Asaved"
+    );
 }
