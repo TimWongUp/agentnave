@@ -3045,3 +3045,91 @@ test("Antigravity interactive tooltip removes quota wording and keeps version re
   assert.doesNotMatch(tip, /省额度/);
   assert.match(tip, /1\.5\.10/);
 });
+
+test("model pool shows, counts, preserves, and allows unticking CLI-unlisted models", async () => {
+  const posts = [];
+  const app = poolEditor(async (url, options) => {
+    posts.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ saved: true, document: JSON.parse(options.body) }) };
+  });
+  app.run(`
+    function poolText(nodes) {
+      return (nodes || []).flat(Infinity).flatMap((node) => typeof node === "string" ? [node]
+        : node && typeof node === "object" ? poolText(node.children) : []);
+    }
+    currentDoc.clis.codex = {
+      allowed_models: ["a", "trae-cn/deepseek-v4.1-flash-max", "google/models/gemini-4-hydrogen"],
+      models: { a: {}, "trae-cn/deepseek-v4.1-flash-max": {}, "google/models/gemini-4-hydrogen": {} },
+    };
+    currentDoc.modes.task.codex.default = "a";
+    currentDoc.modes.discussion.codex.default = "a";
+    markSaved();
+    pickerOpen = "codex/pool";
+  `);
+
+  // Listed summary, picker count, option badges, and conflict hint all reflect the unlisted entries.
+  assert.equal(
+    app.run('poolSummary("codex", getAllModelIds("codex"), shownPool("codex"))'),
+    "3 个：a、trae-cn/deepseek-v4.1-flash-max、google/models/gemini-4-hydrogen",
+  );
+  const text = Array.from(app.run('poolText(poolRows("codex"))'));
+  assert.ok(text.includes("已选 3"));
+  const unlistedBox = app.run('findKey(poolRows("codex"), "codex/pool/allow/trae-cn/deepseek-v4.1-flash-max")');
+  assert.equal(unlistedBox.attrs.checked, true);
+  const picker = app.run('poolRows("codex")[1]');
+  const unlistedRow = picker.children.find((node) => node.tag === "label" && Array.from(app.run(`poolText(${JSON.stringify([node])})`)).includes("trae-cn/deepseek-v4.1-flash-max"));
+  assert.ok(unlistedRow);
+  assert.ok(app.run('poolText(poolRows("codex"))').filter((s) => s === "CLI 未列出").length === 2);
+  assert.equal(app.run('poolConflicts("codex").length'), 1);
+  assert.match(app.run('poolText(poolConflicts("codex")).join(" ")'), /trae-cn\/deepseek-v4\.1-flash-max、google\/models\/gemini-4-hydrogen/);
+
+  // Seats still exclude unlisted models from new selection while preserving an existing binding.
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(seatOptions({ provider: "codex", model: "a" }).map((o) => o.attrs.value))')), ["a"]);
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "trae-cn/deepseek-v4.1-flash-max" }).find((o) => o.attrs.value === "trae-cn/deepseek-v4.1-flash-max").attrs.disabled'), true);
+
+  // Ticking another listed model preserves both unlisted entries.
+  app.run('poolPick("codex/pool/allow/b", true)');
+  await new Promise(setImmediate);
+  assert.deepEqual(app.doc().clis.codex.allowed_models, [
+    "a",
+    "trae-cn/deepseek-v4.1-flash-max",
+    "google/models/gemini-4-hydrogen",
+    "b",
+  ]);
+
+  // Unticking one unlisted entry removes only that entry, keeping the other.
+  app.run('poolPick("codex/pool/allow/trae-cn/deepseek-v4.1-flash-max", false)');
+  await new Promise(setImmediate);
+  assert.deepEqual(app.doc().clis.codex.allowed_models, [
+    "a",
+    "google/models/gemini-4-hydrogen",
+    "b",
+  ]);
+  assert.equal(posts.length, 2);
+
+  // Unticking the last unlisted entry clears the pool conflict.
+  app.run('poolPick("codex/pool/allow/google/models/gemini-4-hydrogen", false)');
+  await new Promise(setImmediate);
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b"]);
+  assert.equal(app.run('poolConflicts("codex").length'), 0);
+
+  // English labels work as specified.
+  const enApp = editor();
+  enApp.run(`
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    AN.settings.textNode = (s) => s;
+    AN.settings.settingTip = () => AN.settings.el("span");
+    AN.L = (_zh, en) => en;
+    AN.settings.L = AN.L;
+    detected.codex = { installed: true, native: { model: "a" }, models: [{ id: "a" }] };
+    currentDoc.clis.codex = { allowed_models: ["a", "gone-model"], models: { a: {}, "gone-model": {} } };
+    pickerOpen = "codex/pool";
+  `);
+  enApp.load("member-cards.js");
+  enApp.run('AN.settings.seatConflicts = () => []; AN.settings.seatConflictText = () => ""');
+  assert.equal(
+    enApp.run('poolRows("codex")[1].children.filter((n) => n.tag === "label")[1].children[2].children[0]'),
+    "Not listed by CLI",
+  );
+  assert.match(enApp.run('poolConflicts("codex")[0].children[0]'), /Not listed by CLI.*gone-model/i);
+});

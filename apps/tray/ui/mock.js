@@ -9,7 +9,7 @@
 // &restart (reset the scenario clock; it is shared between pages through localStorage).
 // Hosts page: &hosts=typical|fresh|reload|mixed (reload: every boss waiting on a reload; mixed: some
 // waiting on a reload, one failing, one not connected; &copyfail fails the one-click stop/restart).
-// &theme=light|dark picks the appearance.
+// &theme=light|dark picks the appearance. Settings page: &unlisted adds CLI-unlisted pool models.
 (function () {
   const q = new URLSearchParams(location.search);
   const hostScene = q.get("hosts") || "typical";
@@ -82,6 +82,7 @@
       version: 1,
       clis: {
         codex: {
+          ...(q.has("unlisted") ? { allowed_models: ["gpt-6.1-sol", "gpt-5.4-turbo", "trae-cn/deepseek-v4.1-flash-max", "google/models/gemini-4-hydrogen"] } : {}),
           models: {
             "gpt-6.1-sol": {
               efforts: ["medium", "high", "xhigh"],
@@ -92,6 +93,7 @@
               notes: "多文件实现、需要跑测试的任务",
             },
             "gpt-5.4-turbo": {},
+            ...(q.has("unlisted") ? { "trae-cn/deepseek-v4.1-flash-max": {}, "google/models/gemini-4-hydrogen": {} } : {}),
           },
         },
         claude: {
