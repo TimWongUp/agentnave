@@ -50,20 +50,12 @@ pub(super) fn yaml_patch(
                 )
             } else {
                 // Preserve the key, spacing, trailing comment and any following blank lines.
-                let header_end = raw[field.full.clone()]
-                    .find('\n')
-                    .map(|i| field.full.start + i)
-                    .unwrap_or(field.full.end);
-                let header = &raw[field.full.start..header_end];
-                let colon = header.find(':').ok_or("YAML 映射无效")?;
-                let tail = &header[colon + 1..];
-                let start = field.full.start + colon + 1 + tail.len() - tail.trim_start().len();
-                let mut line = raw[field.full.clone()].to_owned();
-                line.replace_range(
-                    start - field.full.start..start - field.full.start + field.value.len(),
-                    &value.to_string(),
-                );
-                line
+                let span = yaml_value_span(raw, field)?;
+                format!(
+                    "{}{value}{}",
+                    &raw[field.full.start..span.start],
+                    &raw[span.end..field.full.end]
+                )
             }
         } else {
             String::new()
@@ -115,6 +107,31 @@ enum BodyState {
     Indented,
 }
 
+const YAML_UNSUPPORTED: &str = "不支持的 YAML 结构，需手动配置";
+const YAML_MANUAL: &str = "YAML 值需手动确认";
+
+/// An anchor or alias at the start of a line's node, its value, or a sequence item.
+fn yaml_anchored(text: &str) -> bool {
+    text.starts_with(['&', '*'])
+        || text.starts_with("- &")
+        || text.starts_with("- *")
+        || text
+            .split_once(':')
+            .is_some_and(|(_, value)| value.trim_start().starts_with(['&', '*']))
+}
+
+/// Document markers and directives at column 0, tabs used as indentation, and anchors, aliases or
+/// a directive-like `%` key on the traversed level. Deeper opaque bodies, such as a multi-line
+/// scalar continuing with `*` or holding an indented `---`, are not inspected.
+fn yaml_unsupported(line: &str, leading: usize, indent: usize) -> bool {
+    let text = line.trim();
+    let (key, _) = text.split_once(':').unwrap_or((text, ""));
+    (leading == 0 && (text.starts_with('%') || text == "---" || text == "..."))
+        || (leading <= indent && line[leading..].starts_with('\t'))
+        || (leading == indent
+            && (key.contains('\t') || text.starts_with('%') || yaml_anchored(text)))
+}
+
 /// Only ordinary block mappings at the traversed levels. Unknown field bodies stay opaque.
 /// Anchors, aliases, directives and duplicate mapping keys are rejected rather than rewritten.
 pub(super) fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, String> {
@@ -127,19 +144,10 @@ pub(super) fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, St
             offset += line.len();
             continue;
         }
-        if line.contains('\t')
-            || text.starts_with(['&', '*', '%'])
-            || text.starts_with("- &")
-            || text.starts_with("- *")
-            || text
-                .split_once(':')
-                .is_some_and(|(_, value)| value.trim_start().starts_with(['&', '*']))
-            || text == "---"
-            || text == "..."
-        {
-            return Err("不支持的 YAML 结构，需手动配置".into());
-        }
         let leading = line.len() - line.trim_start_matches(' ').len();
+        if yaml_unsupported(line, leading, indent) {
+            return Err(YAML_UNSUPPORTED.into());
+        }
         if leading < indent {
             return Err("YAML 缩进无效".into());
         }
@@ -226,12 +234,70 @@ pub(super) fn yaml_scalar(text: &str) -> Result<Value, String> {
         return Ok(json!(text[1..text.len() - 1].replace("''", "'")));
     }
     if text.is_empty() || text.starts_with(['"', '[', '{', '&', '*', '|', '>']) {
-        return Err("YAML 值需手动确认".into());
+        return Err(YAML_MANUAL.into());
     }
     Ok(json!(text))
 }
 
+/// Byte offset in `raw` where a field's first-line value starts.
+fn yaml_value_start(raw: &str, field: &YamlField) -> Result<usize, String> {
+    let header = raw[field.full.clone()].lines().next().unwrap_or_default();
+    let colon = header.find(':').ok_or("YAML 映射无效")?;
+    let tail = &header[colon + 1..];
+    Ok(field.full.start + colon + 1 + tail.len() - tail.trim_start().len())
+}
+
+/// A field's value bytes in `raw`, including a flow map folded onto continuation lines.
+fn yaml_value_span(raw: &str, field: &YamlField) -> Result<Range<usize>, String> {
+    let start = yaml_value_start(raw, field)?;
+    let end = match field.value.starts_with('{') {
+        true => yaml_flow(raw, field).map(|(_, end)| end).ok(),
+        false => None,
+    };
+    Ok(start..end.unwrap_or(start + field.value.len()))
+}
+
+/// A JSON flow map, possibly folded across the field's body lines (ruamel.yaml wraps at 80
+/// columns), with the end offset of its closing brace in `raw`. Comments end each line; anything
+/// but blank lines and comments after the map, or a map that never closes, needs manual review.
+fn yaml_flow(raw: &str, field: &YamlField) -> Result<(Value, usize), String> {
+    let mut text = field.value.clone();
+    let mut end = yaml_value_start(raw, field)? + field.value.len();
+    let mut offset = field.body.start;
+    let mut lines = raw[field.body.clone()].split_inclusive('\n');
+    loop {
+        if let Ok(value @ Value::Object(_)) = serde_json::from_str(&text) {
+            let content = |l: &&str| !l.trim().is_empty() && !l.trim_start().starts_with('#');
+            if lines.any(|l| content(&l)) {
+                return Err(YAML_MANUAL.into());
+            }
+            return Ok((value, end));
+        }
+        let line = lines.next().ok_or(YAML_MANUAL)?;
+        let part = yaml_value_text(line).map_err(|_| YAML_MANUAL)?;
+        if yaml_anchored(part) {
+            return Err(YAML_MANUAL.into());
+        }
+        if !part.is_empty() {
+            text.push(' ');
+            text.push_str(part);
+            end = offset + line.len() - line.trim_start().len() + part.len();
+        }
+        offset += line.len();
+    }
+}
+
+/// Anchors or aliases anywhere in the entry: its body is rewritten or removed as a whole.
+fn yaml_entry_anchored(raw: &str) -> bool {
+    raw.lines()
+        .map(str::trim)
+        .any(|text| !text.is_empty() && !text.starts_with('#') && yaml_anchored(text))
+}
+
 pub(super) fn yaml_entry(raw: &str, indent: usize) -> Result<Value, String> {
+    if yaml_entry_anchored(raw) {
+        return Err(YAML_UNSUPPORTED.into());
+    }
     let mut entry = json!({});
     for field in yaml_fields(raw, indent)? {
         let value = if field.key == "env" && field.value.is_empty() {
@@ -243,6 +309,8 @@ pub(super) fn yaml_entry(raw: &str, indent: usize) -> Result<Value, String> {
                 env[&item.key] = yaml_scalar(&item.value)?;
             }
             env
+        } else if field.key == "env" && field.value.starts_with('{') {
+            yaml_flow(raw, &field)?.0
         } else if matches!(field.key.as_str(), "command" | "env") {
             yaml_scalar(&field.value)?
         } else if let Ok(v) = serde_json::from_str(&field.value) {
