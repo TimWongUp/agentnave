@@ -7,10 +7,11 @@ Follow this checklist whenever the user explicitly asks to release a new version
 - A release request is complete only after the version PR is reviewed and merged into `origin/main`, the `.github/workflows/python.yml` release pipeline finishes green, and the corresponding tag and GitHub Release are published with all artifacts. Follow any narrower scope the user explicitly states.
 - Never manually create or move a release tag, and never publish a GitHub Release manually bypassing CI.
 
-## Pre-release local app parity
+## Pre-release local app parity and UI verification
 
 - Local official installation (`/Applications/AgentNave.app` and its embedded service) must only contain reviewed code already merged into `origin/main` (unmerged work uses `scripts/preview_tray.sh`).
 - Releases may lag behind local installation, but the released commit must match the code running in the local official app (excluding version metadata). Before cutting or completing a release, verify parity between merged `main` and the local installation; rebuild and reinstall if they differ.
+- Before releasing an official version or handing off a preview build, the releaser must actively inspect the running tray UI and Settings (via desktop control, screenshots, or equivalent live checks) and confirm there are no errors or UI bugs. Never hand an unverified build straight to the user; if live inspection is blocked after attempting it, stop and report the exact gap rather than claiming verification passed.
 
 ## Version PR checklist
 
