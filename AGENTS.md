@@ -34,7 +34,7 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 - MCP：`uv run agentnave-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
 - 托盘门（改动 `apps/tray` 时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；涉及预览版构建时另跑 `AGENTNAVE_PREVIEW=1 CARGO_TARGET_DIR=target/preview cargo clippy --all-targets -- -D warnings`。
-- 托盘界面目测（macOS）：用 `scripts/preview_tray.sh` 编译并打开「AgentNave 预览」（在 worktree 里自动带目录名、互不覆盖），与正式版并存且不写正式数据、宿主配置或 Skill（隔离细则见 `docs/context/architecture.md`）。本机正式版（`/Applications/AgentNave.app` 及内嵌服务）只装已评审并合入 `origin/main` 的代码，未合并改动只用预览版；PR 合并或放弃后，先退出并删掉 `~/Applications` 中对应预览版，再清理 worktree。
+- 托盘预览与实机界面验收（macOS）：用 `scripts/preview_tray.sh` 编译并打开「AgentNave 预览」（在 worktree 里自动带目录名、互不覆盖），与正式版并存且不写正式数据、宿主配置或 Skill（隔离细则见 `docs/context/architecture.md`）。每次交付预览版或发布／安装正式版前，发版者必须通过桌面控制或其他实机手段亲自检查运行中的托盘界面与设置，确认无报错或界面 bug 后再交给用户，不得未经验证直接丢给用户（实机尝试后仍受限时须明确说明未验证项）。本机正式版（`/Applications/AgentNave.app` 及内嵌服务）只装已评审并合入 `origin/main` 的代码，未合并改动只用预览版；PR 合并或放弃后，先退出并删掉 `~/Applications` 中对应预览版，再清理 worktree。
 - 真实 CLI 验收与标准套件：新增或接入 Provider CLI 必须同时接入为宿主（boss），且至少包含一次通过 AgentNave 发起的真实调用验收，不得以 fake executable 或模拟替代（其他测试默认使用 fake executable）。`uv run python scripts/real_suite.py` 可用便宜模型持续覆盖各模式（参数见脚本头部说明；`--real-history` 会以 `real-suite` 角色写入真实历史，事后在 App 清理；宿主自身 CLI 不会被 `start_agent` 派发，需从普通终端覆盖）。任何真实 CLI 调用都会消耗配额，执行前须取得当前会话的明确授权；未获授权时停下请求授权，不得声称验收完成。
 
 ## Art assets
