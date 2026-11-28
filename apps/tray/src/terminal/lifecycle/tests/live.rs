@@ -688,35 +688,15 @@ fn live_lifecycle(provider: &Provider) {
     }
     println!("[{}] 4 ok: boss re-dispatch answered", provider.name);
 
-    // 5. Stopped by the user, the boss still resumes it by the same ID, not through a wake.
-    let tree5 = live.track(id);
-    assert_eq!(live.office.terminals.stop(Some(id)).status, 200);
-    live.wait_gone(&tree5, "after stop");
-    assert_eq!(live.office.state(id), "dormant");
-    assert!(
-        (0..3).any(|attempt| {
-            let (after_stop, _) = live.dispatch(Some(&native), &ask(30 + attempt));
-            assert_eq!(after_stop, native);
-            assert_eq!(live.derived(), id, "the row keeps its ID");
-            answered(&live, id, 30 + attempt)
-        }),
-        "the turn after the stop was never answered"
-    );
-    live.wait_state(id, &["idle", "uncollected"], Duration::from_secs(30));
+    // 6. Ending the boss takes the derived process and its row with it.
     let tree6 = live.track(id);
-    println!(
-        "[{}] 5 ok: dispatched after stop, tree={tree6:?}",
-        provider.name
-    );
-
-    // 6. Stopping the boss takes the derived process and its row with it.
-    assert_eq!(live.office.terminals.stop(Some(boss)).status, 200);
-    live.wait_gone(&tree6, "after the boss stopped");
+    assert_eq!(live.office.terminals.close(Some(boss)).status, 200);
+    live.wait_gone(&tree6, "after the boss ended");
     assert!(
         live.office.row(id).is_null(),
         "the derived row stays after its boss"
     );
-    assert!(!live.office.row(boss).is_null());
+    assert!(live.office.row(boss).is_null());
     ended(&boss_session);
     println!("[{}] 6 ok: boss cascade", provider.name);
 

@@ -771,9 +771,9 @@ const Actions = {};
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },
       workspaceRenameItem(g),
-      endedTerm && { label: L("关闭终端", "Close terminal"), run: () => ChatTerminal.close(endedTerm.id) },
+      endedTerm && { label: L("结束终端", "End terminal"), run: () => ChatTerminal.close(endedTerm.id) },
       derivedCount > 0 && {
-        label: L(`关闭全部派生终端（${derivedCount}）`, `Close all derived terminals (${derivedCount})`),
+        label: L(`结束全部派生终端（${derivedCount}）`, `End all derived terminals (${derivedCount})`),
         danger: true,
         run: () => ChatTerminal.closeDerived(id),
       },

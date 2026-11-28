@@ -236,7 +236,7 @@ const ChatDerived = (() => {
     return [
       { label: L("打开", "Open"), run: () => openDerived(id) },
       !live && { label: L("续接", "Resume"), run: () => resumeRow(derivedRow, x) },
-      x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
+      x && { label: L("结束派生终端", "End derived terminal"), danger: true, run: () => close(x.id) },
       ...manageItems,
     ].filter(Boolean);
   }
@@ -429,7 +429,7 @@ const ChatDerived = (() => {
         label: L("续接", "Resume"),
         run: () => ChatTerminal?.resumeDerived?.({ group, deskKey: d?.key || row?.desk_key, row, terminal: x }),
       },
-      live && x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => ChatTerminal?.close?.(x.id) },
+      live && x && { label: L("结束派生终端", "End derived terminal"), danger: true, run: () => ChatTerminal?.close?.(x.id) },
     ].filter(Boolean));
   }
 

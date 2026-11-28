@@ -1,37 +1,30 @@
 use super::*;
 
 #[test]
-fn stopping_or_closing_a_boss_takes_its_derived_terminals_with_it() {
-    for close in [false, true] {
-        let office = Office::new();
-        // After `/clear` the boss is in another workspace; what it dispatched before is still its.
-        let (boss, boss_session) = office.boss(&[WS, "s-after-clear"]);
-        let (other_boss, other_session) = office.boss(&["s-other"]);
-        let (idle, idle_session) = office.derived("claude");
-        let busy_session = cli();
-        let busy = office.register("claude", Some("busy"), busy_session.clone(), Some("inv"));
-        let (foreign, foreign_session) = office.derived("claude");
-        office.with(foreign, |r| {
-            r.derived.as_mut().unwrap().parent_workspace_id = Some("s-other".to_owned());
-        });
-        assert_eq!(office.row(idle)["parent_terminal_id"], boss);
-        assert_eq!(office.row(foreign)["parent_terminal_id"], other_boss);
-        let reply = if close {
-            office.terminals.close(Some(boss))
-        } else {
-            office.terminals.stop(Some(boss))
-        };
-        assert_eq!(reply.status, 200);
-        for session in [&boss_session, &idle_session, &busy_session] {
-            ended(session);
-        }
-        assert!(office.row(idle).is_null() && office.row(busy).is_null());
-        assert_eq!(office.row(boss).is_null(), close);
-        assert!(foreign_session.exit().is_none());
-        assert_eq!(office.state(foreign), "idle");
-        foreign_session.stop();
-        other_session.stop();
+fn ending_a_boss_takes_its_derived_terminals_with_it() {
+    let office = Office::new();
+    // After `/clear` the boss is in another workspace; what it dispatched before is still its.
+    let (boss, boss_session) = office.boss(&[WS, "s-after-clear"]);
+    let (other_boss, other_session) = office.boss(&["s-other"]);
+    let (idle, idle_session) = office.derived("claude");
+    let busy_session = cli();
+    let busy = office.register("claude", Some("busy"), busy_session.clone(), Some("inv"));
+    let (foreign, foreign_session) = office.derived("claude");
+    office.with(foreign, |r| {
+        r.derived.as_mut().unwrap().parent_workspace_id = Some("s-other".to_owned());
+    });
+    assert_eq!(office.row(idle)["parent_terminal_id"], boss);
+    assert_eq!(office.row(foreign)["parent_terminal_id"], other_boss);
+    assert_eq!(office.terminals.close(Some(boss)).status, 200);
+    for session in [&boss_session, &idle_session, &busy_session] {
+        ended(session);
     }
+    assert!(office.row(idle).is_null() && office.row(busy).is_null());
+    assert!(office.row(boss).is_null());
+    assert!(foreign_session.exit().is_none());
+    assert_eq!(office.state(foreign), "idle");
+    foreign_session.stop();
+    other_session.stop();
 }
 
 #[test]

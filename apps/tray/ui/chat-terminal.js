@@ -625,13 +625,12 @@ const ChatTerminal = (() => {
     const derivedCount = liveDerivedCount(id);
     Actions.openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
-      x.exit == null && { label: L("结束 CLI", "Stop CLI"), run: () => stop(x.id) },
       derivedCount > 0 && {
-        label: L(`关闭全部派生终端（${derivedCount}）`, `Close all derived terminals (${derivedCount})`),
+        label: L(`结束全部派生终端（${derivedCount}）`, `End all derived terminals (${derivedCount})`),
         danger: true,
         run: () => closeDerived(id),
       },
-      { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
+      { label: L("结束终端", "End terminal"), danger: true, run: () => close(x.id) },
     ].filter(Boolean));
     return true;
   }
@@ -674,7 +673,7 @@ const ChatTerminal = (() => {
     const ds = derivedStateOf(s);
     return ds === "running" || ds === "starting" || ds === "waiting";
   }
-  async function confirmStop(target, { mode = "stop" } = {}) {
+  async function confirmStop(target) {
     const isBatch = Array.isArray(target?.derivedSessions);
     const x = isBatch ? null : target;
     const derivedList = affectedDerivedOf(target);
@@ -684,9 +683,9 @@ const ChatTerminal = (() => {
     const dispatchedDerived = derivedList.filter((s) => isDerivedActive(s) && s.derived_busy).length;
     const draftDerived = derivedList.filter((s) => Boolean(s.has_draft)).length;
 
-    // Closing skips the question only for a terminal whose CLI has already exited; a live new agent
+    // Ending skips the question only for a terminal whose CLI has already exited; a live new agent
     // that has dispatched nothing cannot be reconnected afterwards.
-    if (mode === "close" && x && !x.derived && x.exit != null && !activeDerived && !ownBusyDerived && !draftDerived) return true;
+    if (x && !x.derived && x.exit != null && !activeDerived && !ownBusyDerived && !draftDerived) return true;
 
     const running = x ? hasRunningMembers(x) : false;
     const resumable = x && !x.derived && canResume(x);
@@ -695,7 +694,7 @@ const ChatTerminal = (() => {
     if (x?.derived) {
       if (activeDerived) {
         reasons.push(h("p.act-note", {}, dispatchedDerived
-          ? L("这一轮还没做完，结束后会向 boss 回报未完成。", "This turn has not finished yet; stopping will report it to the boss as unfinished.")
+          ? L("这一轮还没做完，结束后会向 boss 回报未完成。", "This turn has not finished yet; ending will report it to the boss as unfinished.")
           : L("这一轮还没做完。", "This turn has not finished yet.")));
       }
       if (draftDerived) {
@@ -711,16 +710,16 @@ const ChatTerminal = (() => {
         )));
       }
     } else {
-      if ((mode === "stop" || mode === "close") && x) {
+      if (x) {
         if (!x.workspaces?.length) {
           reasons.push(h("p.act-note", {}, L(
             "这个新 agent 还没有派过活，结束终端后不能在 App 里续接这段对话。",
-            "This new agent has not dispatched any work yet; stopping the terminal means it cannot be resumed from the App.",
+            "This new agent has not dispatched any work yet; ending the terminal means it cannot be resumed from the App.",
           )));
         } else if (!resumable) {
           reasons.push(h("p.act-note", {}, L(
             `App 暂不支持在终端里续接 ${AN.cliName(x.provider)} 的对话，结束后无法从这里接回。`,
-            `The App cannot resume ${AN.cliName(x.provider)} conversations yet; stopping ends this terminal session.`,
+            `The App cannot resume ${AN.cliName(x.provider)} conversations yet; once ended, it cannot be resumed here.`,
           )));
         }
         if (running) {
@@ -732,9 +731,9 @@ const ChatTerminal = (() => {
       }
       if (activeDerived > 0) {
         reasons.push(h("p.act-note.warn", {}, dispatchedDerived === activeDerived
-          ? L(`有 ${activeDerived} 个派生会话还没做完，结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; stopping will report them to the boss as unfinished.`)
+          ? L(`有 ${activeDerived} 个派生会话还没做完，结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; ending will report them to the boss as unfinished.`)
           : dispatchedDerived
-            ? L(`有 ${activeDerived} 个派生会话还没做完，其中 ${dispatchedDerived} 个结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; stopping will report ${dispatchedDerived} of them to the boss as unfinished.`)
+            ? L(`有 ${activeDerived} 个派生会话还没做完，其中 ${dispatchedDerived} 个结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; ending will report ${dispatchedDerived} of them to the boss as unfinished.`)
             : L(`有 ${activeDerived} 个派生会话还没做完。`, `${activeDerived} derived session(s) have not finished yet.`)));
       }
       if (ownBusyDerived > 0) {
@@ -754,15 +753,15 @@ const ChatTerminal = (() => {
     if (!reasons.length) return true;
 
     const title = isBatch
-      ? L("关闭全部派生终端？", "Close all derived terminals?")
+      ? L("结束全部派生终端？", "End all derived terminals?")
       : x?.derived
-        ? L("关闭派生终端？", "Close derived terminal?")
-        : (mode === "close" ? L("关闭终端？", "Close terminal?") : L("结束终端？", "Stop terminal?"));
+        ? L("结束派生终端？", "End derived terminal?")
+        : L("结束终端？", "End terminal?");
     const confirmLabel = isBatch
-      ? L("关闭全部", "Close all")
+      ? L("结束全部", "End all")
       : x?.derived
-        ? L("关闭终端", "Close terminal")
-        : (mode === "close" ? L("关闭终端", "Close terminal") : L("结束终端", "Stop terminal"));
+        ? L("结束派生终端", "End derived terminal")
+        : L("结束终端", "End terminal");
 
     const answer = await Actions.ask({
       title,
@@ -812,16 +811,9 @@ const ChatTerminal = (() => {
     }
     return await reply(response);
   }
-  async function stop(id) {
-    const x = byId(id);
-    if (x && !(await confirmStop(x, { mode: "stop" }))) return;
-    await reply(await act(`/app/terminal/stop?session=${id}`, ""));
-    await refresh();
-    refreshOffice();
-  }
   async function close(id) {
     const closing = byId(id);
-    if (closing && !(await confirmStop(closing, { mode: "close" }))) return;
+    if (closing && !(await confirmStop(closing))) return;
     if (!(await reply(await act(`/app/terminal/close?session=${id}`, "")))) return;
     const shownPending = pendingId(state.selected) === id;
     const dctx = derivedContextOf(state.selected);
@@ -850,7 +842,7 @@ const ChatTerminal = (() => {
         (s.parent_workspace_id === workspace || (!s.parent_workspace_id && tid != null && s.parent_terminal_id === tid)),
     );
     if (!affected.length) return null;
-    if (!(await confirmStop({ workspace, derivedSessions: affected }, { mode: "close-derived" }))) return null;
+    if (!(await confirmStop({ workspace, derivedSessions: affected }))) return null;
     const apiWs = tid != null ? (byId(tid)?.workspaces?.at(-1) || workspace) : workspace;
     const result = await reply(await act(`/app/terminal/close-derived?workspace=${encodeURIComponent(apiWs)}`, ""));
     if (!result) return null;
@@ -1000,7 +992,7 @@ const ChatTerminal = (() => {
   const modes = h("div.dr-mode", { role: "group" });
   const toMessages = h("button", { type: "button" }, L("消息", "Messages"));
   const toTerminal = h("button", { type: "button" }, L("终端", "Terminal"));
-  const stopButton = h("button.dr-stop", { type: "button" }, L("结束终端", "Stop terminal"));
+  const stopButton = h("button.dr-stop", { type: "button" }, L("结束终端", "End terminal"));
   // Beside a desk, a room or the isolated directories the controls still belong to the boss's terminal;
   // its mark sits before them so that is never in doubt.
   const bossTag = h("span.dr-boss", { role: "img", hidden: true });
@@ -1045,7 +1037,7 @@ const ChatTerminal = (() => {
     if (t.derivedRevive) void revive(t.derivedRevive);
     else if (t.handover) void newAgent(event, null, t.handover);
     else if (x?.derived) void close(x.id);
-    else if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
+    else if (x) void (x.exit == null ? close(x.id) : restart(x.id));
     else if (t.resumable) void resume(t.resumable);
   });
 
@@ -1128,7 +1120,7 @@ const ChatTerminal = (() => {
     if (el.app?.dataset) el.app.dataset.hasTerm = hasWidth ? "1" : "0";
     el.drawer.classList.toggle("term-mode", !!term);
     modes.hidden = isDerived ? !(live || watchingEnded) : !x;
-    // One place for the terminal's action: stop/close it while it runs, start/resume it once it ended.
+    // One place for the terminal's action: end it while it runs, start/resume it once it ended.
     const ended = x?.exit != null;
     const isReviving = Boolean(isDerived && group && reviving(group));
     let action = null; // [中文, English] of what the button does to the terminal
@@ -1138,8 +1130,8 @@ const ChatTerminal = (() => {
         stopButton.hidden = false;
         stopButton.disabled = false;
         stopButton.classList.toggle("start", false);
-        setText(stopButton, L("关闭终端", "Close terminal"));
-        action = ["关闭", "Close"];
+        setText(stopButton, L("结束派生终端", "End derived terminal"));
+        action = ["结束", "End"];
       } else {
         const canRevive = Boolean(x || (dctx?.parentGroup && dctx?.deskKey?.startsWith("thread:")));
         t.derivedRevive = canRevive ? { id: x?.id, group, parentGroup: dctx?.parentGroup, deskKey: dctx?.deskKey } : null;
@@ -1155,9 +1147,9 @@ const ChatTerminal = (() => {
       stopButton.disabled = false;
       stopButton.classList.toggle("start", !x || ended);
       const resuming = !x || (ended && x.workspaces.length && RESUMES.has(x.provider));
-      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "End terminal");
       setText(stopButton, btnLabel);
-      action = t.handover ? null : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "Stop"];
+      action = t.handover ? null : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "End"];
     }
     describeControls(x, isDerived, action);
     t.owned = x?.id ?? null;
@@ -1308,6 +1300,6 @@ const ChatTerminal = (() => {
     menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal,
     displayState, bossOpensTerminal, bossActivity, running, showing, showingDerived, exitedOf,
     openBoss, openDerived, openDerivedOffice, resumeDerived, stayOnMessages, revive, closeDerived,
-    focusFrame, close, stop,
+    focusFrame, close,
   };
 })();

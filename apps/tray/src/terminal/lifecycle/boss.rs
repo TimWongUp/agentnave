@@ -102,34 +102,6 @@ pub(in crate::terminal) fn end_removed(removed: Vec<Running>) {
 }
 
 impl Terminals {
-    /// Ends the terminal's CLI and keeps its row. A derived one's process ends at once; a boss
-    /// takes the derived terminals it dispatched with it.
-    pub(in crate::terminal) fn stop(&self, id: Option<u64>) -> Response {
-        let (fallen, ending, invocation) = {
-            let mut state = self.lock();
-            let Some(at) = state.open.iter().position(|r| Some(r.id) == id) else {
-                drop(state);
-                return self.with_session(id, |session| {
-                    session.stop();
-                    Ok(())
-                });
-            };
-            let invocation = state.open[at]
-                .derived
-                .as_ref()
-                .and_then(|d| d.active_invocation_id.clone());
-            let ending = state.open[at].begin_stop();
-            (state.take_under(at), ending, invocation)
-        };
-        // Settled first, or the turn's own monitor reports the exit as a crash.
-        if let Some(invocation) = invocation {
-            wakeup::on_terminal_closed(&invocation);
-        }
-        ending.end();
-        end_removed(fallen);
-        Response::json(&json!({"ok": true}))
-    }
-
     /// Ends the terminal's CLI if it still runs and forgets the terminal, and the derived
     /// terminals it dispatched with it.
     pub(in crate::terminal) fn close(&self, id: Option<u64>) -> Response {
