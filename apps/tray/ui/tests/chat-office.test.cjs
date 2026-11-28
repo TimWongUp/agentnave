@@ -5657,10 +5657,26 @@ test("follow preserves overlay drawer via openOnce on derived route upgrades and
   assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
   assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), true);
 
-  // 3. When overlay drawer is closed and terminal is not showing, follow does NOT force openOnce.
+  // 3. When drawer is closed (narrow overlay) or folded (wide), follow does NOT force openOnce even if .term-mode is set.
+  ctx.el.drawer.classList.add("term-mode");
   state.convOpen = false;
+  ctx.el.drawer.hidden = true;
   assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
   assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), false);
+  ctx.el.drawer.hidden = false;
+  ctx.el.drawer.classList.add("folded");
+  state.convCollapsed = true;
+  assert.equal(ctx.ChatTerminal.follow(drvId), "ws-sub-1");
+  assert.equal(ctx.ChatTerminal.consumeOpen("ws-sub-1"), false);
+  ctx.el.drawer.classList.remove("folded");
+  ctx.el.drawer.classList.remove("term-mode");
+  state.convCollapsed = false;
+
+  // 3b. Merged derived row prefers child workspace display_title (e.g. custom rename) to match decorateDerivedOffice.
+  state.groupsData[1].display_title = "自定义子名称";
+  const merged = ctx.ChatTerminal.derivedOf("ws-boss").find((d) => d.group === "ws-sub-1");
+  assert.equal(merged?.display_title, "自定义子名称");
+  assert.equal(merged?.title, "自定义子名称");
 
   // 4. recentlyActive falls back to c.updated and ChatTerminal.findDerivedRow(c.group)?.updated for drv-... not in groupsData.
   assert.equal(ctx.recentlyActive({ group: drvId, updated: nowIso }), true);

@@ -477,6 +477,12 @@ const ChatTerminal = (() => {
   // - plain term-N -> workspace when it dispatches;
   // - derived term-N -> child_workspace_id or drv-{parent}-{desk} once it has parent+desk;
   // - drv-{parent}-{desk} -> child_workspace_id once it dispatches its first subagent/meeting.
+  function drawerOpenForFollow() {
+    if (typeof state === "undefined" || el.drawer?.hidden) return false;
+    if (el.drawer?.classList?.contains?.("folded") && !state.convPeek) return false;
+    if (typeof overlay !== "undefined" && overlay?.matches) return Boolean(state.convOpen);
+    return !state.convCollapsed && (showing() || t.shown != null || Boolean(state.convOpen));
+  }
   function follow(selected) {
     if (!selected) return selected;
     const id = pendingId(selected);
@@ -490,9 +496,7 @@ const ChatTerminal = (() => {
       const target = row?.child_workspace_id || derivedRowId(x.parent_workspace_id, x.desk_key);
       if (target !== selected) {
         t.terminal.set(target, t.terminal.get(selected) ?? true);
-        if (showing() || t.shown != null || (typeof state !== "undefined" && state?.convOpen)) {
-          t.openOnce = target;
-        }
+        if (drawerOpenForFollow()) t.openOnce = target;
       }
       return target;
     }
@@ -503,9 +507,7 @@ const ChatTerminal = (() => {
       if (row?.child_workspace_id && row.child_workspace_id !== selected) {
         const prev = t.terminal.has(selected) ? t.terminal.get(selected) : (t.shown != null ? true : undefined);
         if (prev !== undefined) t.terminal.set(row.child_workspace_id, prev);
-        if (showing() || t.shown != null || (typeof state !== "undefined" && state?.convOpen)) {
-          t.openOnce = row.child_workspace_id;
-        }
+        if (drawerOpenForFollow()) t.openOnce = row.child_workspace_id;
         return row.child_workspace_id;
       }
       return selected;

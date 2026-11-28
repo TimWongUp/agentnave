@@ -87,9 +87,9 @@ const ChatDerived = (() => {
     if (!childGroup) return { ...row, child_workspace_id: null, child_status: "" };
     const childStatus = childGroup.status || "idle";
     const childActive = childStatus === "running" || childStatus === "review";
-    const displayTitle = row.display_title
+    const displayTitle = childGroup.display_title
+      || row.display_title
       || (row.desk_key && derivedTitles?.[row.desk_key])
-      || childGroup.display_title
       || null;
     const title = displayTitle || childGroup.title || row.title;
     const latestUpdated = (AN.at?.(childGroup.updated) || 0) > (AN.at?.(row.updated) || 0)
