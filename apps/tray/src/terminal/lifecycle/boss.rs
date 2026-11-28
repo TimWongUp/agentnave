@@ -86,16 +86,17 @@ impl State {
 /// Ends terminals already taken off the list; a turn still in flight is settled as cut short.
 pub(in crate::terminal) fn end_removed(removed: Vec<Running>) {
     for running in removed {
-        #[cfg(unix)]
-        if let Some(codex) = &running.codex {
-            codex.close();
-        }
+        // Settled first, or a Codex turn cut off by the closed connection reports itself failed.
         if let Some(invocation) = running
             .derived
             .as_ref()
             .and_then(|d| d.active_invocation_id.as_deref())
         {
             wakeup::on_terminal_closed(invocation);
+        }
+        #[cfg(unix)]
+        if let Some(codex) = &running.codex {
+            codex.close();
         }
         running.session.stop();
     }

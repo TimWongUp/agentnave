@@ -1,7 +1,7 @@
 //! Opt-in end-to-end run of the derived-session lifecycle (ADR-0124) against the real, logged-in
-//! CLIs, one provider per test: dispatch, collapse, wake, a turn the user types, re-dispatch, stop
+//! CLIs, one provider per test: dispatch, collapse, wake, a turn the user types, re-dispatch, end
 //! then re-dispatch, and the boss's end. It goes through the tray's own code (`execute_run`,
-//! `Terminals::wake_in`, `collapse_idle`, `stop`), with the data root in a temp directory and the
+//! `Terminals::wake_in`, `collapse_idle`, `close`), with the data root in a temp directory and the
 //! fifteen-minute grace driven by an injected clock. Costs quota; each test runs a handful of turns
 //! on the cheap model.
 //!
@@ -687,6 +687,24 @@ fn live_lifecycle(provider: &Provider) {
         );
     }
     println!("[{}] 4 ok: boss re-dispatch answered", provider.name);
+
+    // 5. Ended by the user, the row goes; the boss still resumes the same session by its ID.
+    let tree5 = live.track(id);
+    assert_eq!(live.office.terminals.close(Some(id)).status, 200);
+    live.wait_gone(&tree5, "after the user ended it");
+    assert!(live.office.row(id).is_null(), "the ended row stays");
+    let mut id = id;
+    assert!(
+        (0..3).any(|attempt| {
+            let (after_end, _) = live.dispatch(Some(&native), &ask(30 + attempt));
+            assert_eq!(after_end, native);
+            id = live.derived();
+            answered(&live, id, 30 + attempt)
+        }),
+        "the turn after the end was never answered"
+    );
+    live.wait_state(id, &["idle", "uncollected"], Duration::from_secs(30));
+    println!("[{}] 5 ok: dispatched after end", provider.name);
 
     // 6. Ending the boss takes the derived process and its row with it.
     let tree6 = live.track(id);
