@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -68,6 +68,7 @@ from agentnave.mcp_runtime import (
     started_payload,
     update_payload,
 )
+from agentnave.mcp_wait_tasks import WaitArguments, start_wait_task, wait_task_request
 from agentnave.members import (
     PERMISSION_KEYS,
     OrchestrationRole,
@@ -921,7 +922,32 @@ async def wait(
             "wait_seconds=1500 is only available in the Claude Code terminal interactive "
             "session with background tasks enabled; use 0 or 270."
         )
-    payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
+    request = wait_task_request()
+    if request is not None and wait_seconds != 0:
+        # A task-capable host waits in the background: scan once, and only if nothing is ready
+        # yet hand it a wait task that collects on a later tasks/get (ADR-0131).
+        payload = await probe_wait(ids, include_output, wait_seconds, manager_session_id, ctx)
+        if payload["reason"] == "wait_elapsed":
+            request.task = start_wait_task(
+                ctx, WaitArguments(ids, include_output, wait_seconds, manager_session_id, seq)
+            )
+            return payload
+    else:
+        payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
+    return await finish_wait(
+        payload, ids=ids, seq=seq, manager_session_id=manager_session_id, ctx=ctx
+    )
+
+
+async def finish_wait(
+    payload: WaitPayload,
+    *,
+    ids: list[str] | None,
+    seq: int | None,
+    manager_session_id: str | None,
+    ctx: Context[Runtime],
+) -> WaitPayload:
+    """Close a wait that returns to the boss: follow-up list, inbox snapshot and seq."""
     await settle_follow_up(
         _conversations(ctx), payload, inbox=ids is None, manager_session_id=manager_session_id
     )
@@ -935,6 +961,18 @@ async def wait(
     return payload
 
 
+async def probe_wait(
+    ids: list[str] | None,
+    include_output: bool,
+    wait_seconds: Literal[270, 1500] | None,
+    manager_session_id: str | None,
+    ctx: Context[Runtime],
+) -> WaitPayload:
+    """One non-blocking pass of a blocking wait: what it would return right now, consuming
+    only what it returns."""
+    return await _receive(ids, include_output, wait_seconds, manager_session_id, ctx, window=0.0)
+
+
 def _already_waiting_payload(pending_ids: list[str]) -> WaitPayload:
     return {
         "reason": "already_waiting",
@@ -942,7 +980,7 @@ def _already_waiting_payload(pending_ids: list[str]) -> WaitPayload:
         "all_finished": False,
         "updates": [],
         "rounds": [],
-        "next": runtime.ALREADY_WAITING,
+        "next": runtime.already_waiting_next(),
     }
 
 
@@ -1006,6 +1044,59 @@ def _explicit_wait_workspaces(
     return workspaces
 
 
+@dataclass(frozen=True)
+class BlockingWaitKeys:
+    """Where a blocking wait is registered: the chat's inbox, or the workspaces of its ids."""
+
+    blocking_inbox: bool
+    inbox_key: str | None
+    explicit_wait_keys: frozenset[str | None]
+
+
+def blocking_wait_keys(
+    ctx: Context[Runtime], ids: list[str] | None, manager_session_id: str | None
+) -> BlockingWaitKeys:
+    """The registration a blocking wait over these ids makes, as _receive computes it."""
+    conversations = _conversations(ctx)
+    if ids is None:
+        return BlockingWaitKeys(True, conversations.inbox_key(manager_session_id), frozenset())
+    invocation_ids, round_ids = _explicit_handles(_manager(ctx), conversations, ids)
+    workspaces = _explicit_wait_workspaces(
+        conversations, invocation_ids, round_ids, manager_session_id
+    )
+    return BlockingWaitKeys(False, None, frozenset(workspaces))
+
+
+def inbox_wait_active(ctx: Context[Runtime], keys: BlockingWaitKeys) -> bool:
+    """Whether another blocking inbox wait already holds this chat's inbox."""
+    return keys.blocking_inbox and keys.inbox_key in _active_inbox_waits(ctx)
+
+
+def hold_blocking_wait(ctx: Context[Runtime], keys: BlockingWaitKeys) -> Callable[[], None]:
+    """Register a blocking wait (already_waiting, tray badge) and return its release."""
+    state = ctx.request_context.lifespan_context
+    active_inbox_waits = _active_inbox_waits(ctx)
+    active_waits = _active_waits(ctx)
+    if keys.blocking_inbox:
+        active_inbox_waits.add(keys.inbox_key)
+        state.refresh_inbox()
+    elif keys.explicit_wait_keys:
+        for workspace in keys.explicit_wait_keys:
+            active_waits[workspace] += 1
+        state.refresh_inbox()
+
+    def release() -> None:
+        if keys.blocking_inbox:
+            active_inbox_waits.discard(keys.inbox_key)
+        for workspace in keys.explicit_wait_keys:
+            active_waits[workspace] -= 1
+            if active_waits[workspace] <= 0:
+                del active_waits[workspace]
+        state.refresh_inbox()
+
+    return release
+
+
 @contextmanager
 def _track_blocking_wait(
     ctx: Context[Runtime],
@@ -1014,25 +1105,25 @@ def _track_blocking_wait(
     inbox_key: str | None,
     explicit_wait_keys: set[str | None],
 ) -> Generator[None]:
-    active_inbox_waits = _active_inbox_waits(ctx)
-    active_waits = _active_waits(ctx)
-    if blocking_inbox:
-        active_inbox_waits.add(inbox_key)
-        ctx.request_context.lifespan_context.refresh_inbox()
-    elif explicit_wait_keys:
-        for workspace in explicit_wait_keys:
-            active_waits[workspace] += 1
-        ctx.request_context.lifespan_context.refresh_inbox()
+    release = hold_blocking_wait(
+        ctx, BlockingWaitKeys(blocking_inbox, inbox_key, frozenset(explicit_wait_keys))
+    )
     try:
         yield
     finally:
-        if blocking_inbox:
-            active_inbox_waits.discard(inbox_key)
-        for workspace in explicit_wait_keys:
-            active_waits[workspace] -= 1
-            if active_waits[workspace] <= 0:
-                del active_waits[workspace]
-        ctx.request_context.lifespan_context.refresh_inbox()
+        release()
+
+
+def _wait_window(wait_seconds: Literal[0, 270, 1500] | None, window: float | None) -> float:
+    """Resolve the blocking wait duration; a given window is a wait task's non-blocking pass."""
+    if window is not None:
+        return window
+    if wait_seconds is None:
+        # A long-wait session already decided this call runs in the background (ADR-0084).
+        return float(
+            runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
+        )
+    return float(wait_seconds)
 
 
 async def _receive(
@@ -1041,6 +1132,8 @@ async def _receive(
     wait_seconds: Literal[0, 270, 1500] | None,
     manager_session_id: str | None,
     ctx: Context[Runtime],
+    *,
+    window: float | None = None,
 ) -> WaitPayload:
     manager = _manager(ctx)
     conversations = _conversations(ctx)
@@ -1066,12 +1159,8 @@ async def _receive(
             explicit_wait_keys = _explicit_wait_workspaces(
                 conversations, invocation_ids, round_ids, manager_session_id
             )
-    if wait_seconds is None:
-        # A long-wait session already decided this call runs in the background (ADR-0084).
-        window = runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
-    else:
-        window = wait_seconds
-    deadline = time.monotonic() + window
+    resolved_window = _wait_window(wait_seconds, window)
+    deadline = time.monotonic() + resolved_window
     with _track_blocking_wait(
         ctx,
         blocking_inbox=blocking_inbox,
@@ -1079,7 +1168,7 @@ async def _receive(
         explicit_wait_keys=explicit_wait_keys,
     ):
         while True:
-            timeout = min(float(window), max(0.0, deadline - time.monotonic()))
+            timeout = min(resolved_window, max(0.0, deadline - time.monotonic()))
             if blocking_inbox:
                 # Re-check the inbox periodically so tasks dispatched mid-wait are received here.
                 timeout = min(timeout, float(runtime.INBOX_WAIT_SLICE_SECONDS))
@@ -1130,7 +1219,7 @@ async def _receive(
             and "next" in payload
             and inbox_key in active_inbox_waits
         ):
-            payload["next"] = runtime.ALREADY_WAITING
+            payload["next"] = runtime.already_waiting_next()
         return payload
 
 
@@ -1358,6 +1447,7 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
             conversations.restart_safe()
             and conversations.isolated.restart_safe()
             and ctx.request_context.lifespan_context.retention.restart_safe()
+            and ctx.request_context.lifespan_context.wait_tasks.restart_safe()
         ),
     }
 

@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-15
+- 由 [ADR-0131](0131-wait-as-mcp-task.md) 补充：中继不变，`restart_safe` 计入进行中的等待任务。
 - 修订：2026-11-03 补记，见文末「修订：MCP 2026-07-28 起的无握手宿主」。
 - 修订 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 第 6 条：托盘可一键升级本机服务。
 - 双入口和核心内存组固定旧进程条款由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代；原地重装的空闲升级机制继续沿用。

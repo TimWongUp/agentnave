@@ -2,6 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-12
+- 由 [ADR-0131](0131-wait-as-mcp-task.md) 修订：支持 MCP Tasks 的连接上省略 `wait_seconds` 不再等 1500 秒，而是转为等待任务。
 - 长等待判据加上「未关闭后台任务」，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 修订 [ADR-0077](0077-claude-long-wait.md) 中「保留默认 270 秒，1500 秒须显式传入」一条；适用范围仍按 [ADR-0082](0082-claude-long-wait-terminal-only.md)。
 

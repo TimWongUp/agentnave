@@ -963,6 +963,11 @@ class InvocationManager:
         """Codes of blockers no wait has returned yet, oldest first; reading them consumes none."""
         return [attention.code for attention in self._record(invocation_id).pending_attention]
 
+    def progress_stalled(self, invocation_id: str) -> bool:
+        """Whether the current silence of a live run was already reported (ADR-0116)."""
+        record = self._record(invocation_id)
+        return record.progress.reminded and record.accepts_reminders()
+
     def notify_background_tasks_pending(
         self,
         invocation_id: str,

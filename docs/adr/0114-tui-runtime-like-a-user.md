@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-23
+- 第 3 节收件方式表由 [ADR-0131](0131-wait-as-mcp-task.md) 补充：支持 MCP Tasks 的 Claude Code 连接上，`wait` 转为后台等待任务。
 - T3 主线程的后台等待与 T3 标识剥离由 [ADR-0121](0121-t3-code-orchestration.md) 修订。
 - 修订：
   - [ADR-0003](0003-agent-only-stdio-mcp-server.md)：`agentnave-mcp` 之外，服务包内多一个 boss 可在后台运行的只读等待模块（第 3 节）。
@@ -56,6 +57,7 @@ ADR-0113 之后 AgentNave 回到以 MCP 编排为主。用户提出四个问题�
 
 | boss 所在 | 收结果的方式 |
 |---|---|
+| 支持 MCP Tasks 的 Claude Code 连接（请求声明 `io.modelcontextprotocol/tasks`，T3 除外；终端、VS Code、桌面端本地会话） | `wait` 立即转为后台等待任务，结果到达时 Claude 自己开新一轮（[ADR-0131](0131-wait-as-mcp-task.md)） |
 | Claude 交互会话（入口 `cli`，未关闭后台任务；终端或 App 内终端） | `wait(1500)`（ADR-0084 默认值）：满两分钟转后台，子代理结束时 Claude 自己开新一轮 |
 | agy 交互 TUI（可信判据确认是已验收版本的 agy CLI；终端或 App 内终端） | 派发后照回执运行等待命令，命令返回后 `wait(0)` 收取 |
 | Codex（App 内终端，平台支持时） | 私有 app-server 结构化推送（ADR-0105） |

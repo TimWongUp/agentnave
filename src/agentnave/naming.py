@@ -51,6 +51,11 @@ _FAMILY = {
 }
 
 
+def cli_label(provider: str) -> str:
+    """The CLI's display name, as identities spell it."""
+    return _CLI.get(provider, provider)
+
+
 def thread(provider: str, session_id: str | None) -> str | None:
     """Existing opaque native-session hash, shared by projections and naming."""
     if session_id is None:

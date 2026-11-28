@@ -79,8 +79,25 @@ CLAUDE_SHORT_WAIT_AGAIN = (
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 
+# Hosts that accept MCP Tasks: a blocking wait returns at once as a background task (ADR-0131).
+TASK_WAIT_NEXT = (
+    "Before ending your turn, call wait (omit ids and wait_seconds, same manager_session_id): "
+    "it becomes a background task at once, and Claude Code starts a new turn when results arrive."
+)
+TASK_WAIT_AGAIN = (
+    "Still pending: reply to any new user message first, and handle any prompt_pending or "
+    "review_needed, then call wait again (omit ids and wait_seconds, same manager_session_id) "
+    "before ending your turn — it becomes a background task and Claude Code starts a new turn "
+    "when results arrive; increment seq on each wait to distinguish repeated calls."
+)
+TASK_ALREADY_WAITING = (
+    "A background wait task for this chat is still running and delivers its results in a new "
+    "turn: end your turn instead of starting another blocking wait. To check progress or collect "
+    "ready results now, call wait(wait_seconds=0)."
+)
+
 BLOCKING_WAIT_AGAIN = frozenset(
-    {WAIT_AGAIN, CODEX_WAIT_AGAIN, CLAUDE_LONG_WAIT_AGAIN, CLAUDE_SHORT_WAIT_AGAIN}
+    {WAIT_AGAIN, CODEX_WAIT_AGAIN, CLAUDE_LONG_WAIT_AGAIN, CLAUDE_SHORT_WAIT_AGAIN, TASK_WAIT_AGAIN}
 )
 
 type WatchHostName = Literal["antigravity", "grok"]
@@ -430,8 +447,12 @@ def build_wait_guidance(
     watch_supported: Callable[[str], bool] = watch_host_cli_supported,
     t3_main: bool = False,
     t3_watch_supported: Callable[[str], bool] = t3_watch_host_cli_supported,
+    tasks: bool = False,
 ) -> str:
-    """Select receipt `next` text according to host self-wake capabilities (ADR-0114, ADR-0121)."""
+    """Select receipt `next` text according to host self-wake capabilities (ADR-0114, ADR-0121);
+    `tasks` marks a request that accepts MCP Tasks (ADR-0131)."""
+    if tasks:
+        return TASK_WAIT_AGAIN if again else TASK_WAIT_NEXT
     # Antigravity self-wakes only on versions that background run_command; older ones wait.
     if (
         t3_main

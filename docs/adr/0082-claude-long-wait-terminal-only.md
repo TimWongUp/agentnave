@@ -2,6 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-11
+- 「不把 `wait` 实现为 MCP task」由 [ADR-0131](0131-wait-as-mcp-task.md) 撤回：Claude Code 2.1.331 起桌面端与 VS Code 也支持 MCP Tasks，`wait` 在这些连接上以等待任务在后台等。
 - 长等待判据加上「未关闭后台任务」，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 修订 [ADR-0077](0077-claude-long-wait.md) 的适用范围。
 

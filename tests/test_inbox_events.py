@@ -16,7 +16,7 @@ from agentnave.adapters.base import AdapterHooks
 from agentnave.conversations import Conversations
 from agentnave.group import Group, GroupSeat, Round, SeatRun
 from agentnave.host import Host
-from agentnave.inbox_events import _round_events  # pyright: ignore[reportPrivateUsage]
+from agentnave.inbox_events import round_events
 from agentnave.mcp_server import mcp
 from agentnave.models import InvocationError
 from agentnave.native_prompts import NativePrompt
@@ -32,24 +32,24 @@ def test_round_attention_keys_and_consumption(tmp_path: Path) -> None:
     round_ = Round("round", group, 1, "parallel", [lost, running])
     conversations = cast(Conversations, SimpleNamespace(reviews={"round": {"a": "pending"}}))
 
-    items = _round_events(conversations, round_)  # pyright: ignore[reportPrivateUsage]
+    items = round_events(conversations, round_)
     assert {item["kind"] for item in items} == {"review", "prompt", "blocked", "seat_lost"}
-    assert items == _round_events(conversations, round_)  # pyright: ignore[reportPrivateUsage]
+    assert items == round_events(conversations, round_)
     previous_lost = next(item["key"] for item in items if item["kind"] == "seat_lost")
     running.reported_prompts.add("prompt-one")
     running.reported_blockers = 1
     lost.reported_lost = True
-    assert [item["kind"] for item in _round_events(conversations, round_)] == ["review"]  # pyright: ignore[reportPrivateUsage]
+    assert [item["kind"] for item in round_events(conversations, round_)] == ["review"]
     lost.reported_lost = False
     lost.attempt = 2
     assert (
         next(
             item["key"]
-            for item in _round_events(conversations, round_)
+            for item in round_events(conversations, round_)
             if item["kind"] == "seat_lost"
         )
         != previous_lost
-    )  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def test_prompt_keys_distinguish_seats_and_retries(tmp_path: Path) -> None:
@@ -59,10 +59,10 @@ def test_prompt_keys_distinguish_seats_and_retries(tmp_path: Path) -> None:
         run.prompts.append(NativePrompt("same", "permission", "Bash"))
     round_ = Round("round", Group("group", tmp_path, seats), 1, "parallel", runs)
     conversations = cast(Conversations, SimpleNamespace(reviews={}))
-    keys = [item["key"] for item in _round_events(conversations, round_)]  # pyright: ignore[reportPrivateUsage]
+    keys = [item["key"] for item in round_events(conversations, round_)]
     assert len(set(keys)) == 2
     runs[0].attempt += 1
-    updated = [item["key"] for item in _round_events(conversations, round_)]  # pyright: ignore[reportPrivateUsage]
+    updated = [item["key"] for item in round_events(conversations, round_)]
     assert updated[0] != keys[0] and updated[1] == keys[1]
 
 
