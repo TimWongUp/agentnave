@@ -20,22 +20,9 @@ macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交�
 
 ## 显式受限工具
 
-`restricted_tools=true` 要求专用 `cwd` 事先含 `.agents/agents/agentnave-discussion.md`，内容须与下列定义一致；缺失或不符时 Adapter 返回错误，不代写角色文件。Studio 的隔离席位会自动准备；单任务由调用方在专用目录中准备，保持现有项目目录不变。
+`restricted_tools=true` 使用默认 Agent，不写也不加载 `.agents/agents/` 下的自定义角色文件（自 agy 1.5.17 起自定义 Agent 按高倍率扣额，默认 Agent 维持原价）。Adapter 通过本次会话的 `--settings` 传入不落盘的收紧配置：`permissions.deny` 拒绝 `command(*)`、`read_file(*)`、`write_file(*)`、`read_url(*)`、`execute_url(*)`、`download_url(*)`、`mcp(*)`，并关闭非工作区访问与 slash commands、开启终端沙箱、工具权限设为 `request-review`，同时保留 `--sandbox=true`、`--disable-slash-commands=true`。任意 `cwd` 均可使用，不必事先准备目录。
 
-```markdown
----
-name: agentnave-discussion
-description: Dialogue-only participant for AgentNave discussion rooms.
-tools: []
-mcpServers: []
-skills: []
-plugins: []
-mainAgent: true
-subagent: false
-commandExecutionPolicy: off
----
-You are a conversation participant. Answer the current user request.
-```
+这是拒绝执行，不是移除定义：工具声明仍在默认 Agent 上下文中，模型可能尝试调用并被拒绝；agy 在 stderr 报告自动拒绝时，任务按受阻处理。该方案尚未做消耗真实配额的 `agy` 实测。
 
 ## 项目目录
 

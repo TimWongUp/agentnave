@@ -12,11 +12,7 @@ import pytest
 
 from agentnave.adapters import base, codex, get_adapter
 from agentnave.adapters import deepseek as deepseek_adapter
-from agentnave.adapters.antigravity import (
-    AntigravityAdapter,
-    session_model,
-    write_restricted_profile,
-)
+from agentnave.adapters.antigravity import AntigravityAdapter, session_model
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
@@ -1851,11 +1847,6 @@ def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provi
         session_id="own-seat-session",
         provider_options={"restricted_tools": True, "model": "explicit"},
     )
-    if provider == "antigravity":
-        with pytest.raises(ValueError, match="dedicated cwd"):
-            adapter.prepare(restricted)
-        assert not (tmp_path / ".agents").exists()
-        write_restricted_profile(tmp_path)
     command = adapter.prepare(restricted)
     try:
         argv = command.argv
@@ -1903,8 +1894,15 @@ def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provi
         else:
             assert argv[argv.index("--conversation") + 1] == "own-seat-session"
             assert {"--sandbox=true", "--disable-slash-commands=true"} <= set(argv)
-            profile = tmp_path / ".agents" / "agents" / "agentnave-discussion.md"
-            assert "tools: []" in profile.read_text() and "mcpServers: []" in profile.read_text()
+            # Custom agents bill at a higher rate; the default agent denies tools by settings.
+            assert "--agent" not in argv
+            settings = json.loads(argv[argv.index("--settings") + 1])
+            assert settings["toolPermission"] == "request-review"
+            assert settings["allowNonWorkspaceAccess"] is False
+            assert {"command(*)", "read_file(*)", "write_file(*)", "mcp(*)"} <= set(
+                settings["permissions"]["deny"]
+            )
+            assert not (tmp_path / ".agents").exists()
     finally:
         for path in command.cleanup_paths:
             path.unlink()

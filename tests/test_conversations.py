@@ -981,7 +981,7 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
             for seat in cast(list[dict[str, object]], show["members"])
         }
         assert seat_dirs["a"] == data_root / "seats" / group_id / "a"
-        assert (seat_dirs["g"] / ".agents" / "agents" / "agentnave-discussion.md").is_file()
+        assert not (seat_dirs["g"] / ".agents").exists()  # no custom agent profile
         started = await _run(
             client,
             {"group_id": group_id, "seats": ["a"], "order": "parallel", "prompt": "hello"},
